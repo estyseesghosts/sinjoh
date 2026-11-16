@@ -63,11 +63,24 @@ Prerequisites: devkitPro (`devkitARM`, `libctru`, `citro3d`, `3dstools`,
 
 ```sh
 python tools/game/bootstrap.py        # pinned decomp + SDKs, apply patches
-python tools/game/platinum_game.py --target 3ds --out build/kj
+make -f engine/game.mk TARGET=3ds program -j8
 ```
 
-The user's own Platinum dump is only needed to build the data pack; no game
-data is stored in this repository.
+The build writes `build/game/3ds/sinjoh.3dsx`. On Windows, run make from the
+devkitPro MSYS2 shell with Git for Windows first on `PATH` (its own git can
+fetch over HTTPS; MSYS2's cannot).
+
+The data pack needs the player's own Platinum dump, never committed:
+
+```sh
+python builder/extract_rom.py path/to/platinum.nds --output build/data_pack
+python builder/pack.py build/data_pack -o build/platinum.pak --build-id platinum-nitrofs-1
+```
+
+Stage `build/platinum.pak` and `build/data_pack/manifest.json` as
+`sdmc:/3ds/kohjoh/data/platinum.pak` and `platinum.manifest.json`.
+`pwsh tools/azahar/run.ps1 -Edition platinum -Pack ... -Manifest ...` does
+that and collects screenshots and the log.
 
 ## Provenance and licence
 

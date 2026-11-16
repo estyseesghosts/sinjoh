@@ -23,7 +23,7 @@ TARGET ?= host
 ROOT   := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))../..)
 SDK    := $(ROOT)/build/NitroSDK
 NNS    := $(ROOT)/build/NitroSystem
-NITRO  := $(ROOT)/src/compat/nitro
+NITRO  := $(ROOT)/engine/compat/nitro
 
 ifeq ($(wildcard $(SDK)/include/nitro.h),)
 $(error NitroSDK not found at $(SDK). Run: python tools/bootstrap.py)
@@ -102,7 +102,7 @@ endif
 # header, and those files then can't be linked together. So after compiling,
 # mark them weak: the linker keeps one copy, as Metrowerks did. The list is
 # made by compiling every NitroSystem header (tools/nns_inline_symbols.py).
-NNS_INLINE_SYMS   := $(ROOT)/3ds_port/nitrosystem/build/$(TARGET)/gen/nns_inline.syms
+NNS_INLINE_SYMS   := $(ROOT)/engine/compat/nitrosystem/build/$(TARGET)/gen/nns_inline.syms
 WEAKEN_NNS_INLINE  = $(OBJCOPY) --weaken-symbols=$(NNS_INLINE_SYMS) $@
 
 # kohjoh: MSYS2 strips TMP/TEMP from the environment its children see, and a

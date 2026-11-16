@@ -16,6 +16,23 @@ storage, diagnostics and the app lifecycle.
 Modifications for sinjoh are made in this tree; each touched file keeps the
 original GPL notice and gains a header line naming the change.
 
+`tools/azahar/run.ps1` is kohjoh's Azahar harness, used unchanged to stage the
+build into a private SD card, run it windowed, take timed screenshots and
+collect the program log.
+
+## Game build harness: pokeplatinum-3ds
+
+`engine/game.mk`, `engine/compat/platinum/include/`, the `prepare_game_*`
+tools, `tools/game/game_sources.py`, `tools/game/game_overlays.py`,
+`tools/game/make_game_wifi_stubs.py`, `tools/game/nns_inline_symbols.py`,
+`tools/game/png_embed.py` and `builder/` are adapted from
+[GabeSud0/pokeplatinum-3ds](https://github.com/GabeSud0/pokeplatinum-3ds)
+(GPL-3.0). They compile the original game sources and generate the headers the
+decompilation's own Meson rules produce; they are not a renderer. The patches
+under `patches/` are that project's game-side and SDK patch stacks, copied
+with the file's own provenance header. Sinjoh's runtime, renderer and boot
+glue are kohjoh's, and the game's port hooks target kohjoh's compat layer.
+
 ## Game-side compatibility: reference, not import
 
 The Platinum game's compiler/ABI/correctness fixes and the shape of the SDK

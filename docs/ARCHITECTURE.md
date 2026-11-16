@@ -36,6 +36,12 @@ There is one frame loop: the game's. O3DS is the design floor: the program
 never enables the New 3DS clock or L2, and it runs in the ordinary 64 MB
 application memory mode.
 
+Presentation is 30 Hz on O3DS by contract: the DS game ticks at 60 Hz, the
+renderer presents every second coherent frame, and a late frame is dropped
+rather than delaying the game. 60 Hz frame interpolation, if added, is an
+opt-in New 3DS enhancement with its own thread budget; it is not part of the
+O3DS baseline and must never consume O3DS memory or CPU.
+
 ## 2D
 
 DS tiles are palette-expanded into a 1024x1024 RGBA5551 atlas, one DS 8x8 tile

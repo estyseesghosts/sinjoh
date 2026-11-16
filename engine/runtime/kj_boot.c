@@ -5,7 +5,8 @@
  * Writes the cartridge header and firmware settings the SDK reads, hands the
  * compat layer the overlay table, registers the virtual ARM7 services and
  * runs the original NitroMain. Cartridge-header values and the fixed MAC
- * address follow hgss-3ds (hgss/game/app/heartgold.c @ a26c003, GPL-3.0).
+ * address follow pokeplatinum-3ds's game start (3ds_port/game/app/platinum.c,
+ * GPL-3.0); the boot sequence is kohjoh's.
  */
 
 #include "kj_bridge.h"
@@ -15,33 +16,18 @@
 #include <nitro_port_fs.h>
 #include <string.h>
 
-extern const NitroPortOverlay gHeartgoldOverlays[];   /* gen/overlay_table.c */
-extern const u32 gHeartgoldOverlayCount;
+extern const NitroPortOverlay gPlatinumOverlays[];   /* gen/overlay_table.c */
+extern const u32 gPlatinumOverlayCount;
 
 void NitroMain(void);
 
-#if defined(SOULSILVER)
-#define KJ_EDITION "soulsilver"
-#define KJ_PAK_BUILD_ID "soulsilver-nitrofs-1"
-#define KJ_ROM_GAME_CODE "IPGE"
-#define KJ_ROM_TITLE "POKEMON SS"
-#else
-#define KJ_EDITION "heartgold"
-#define KJ_PAK_BUILD_ID "heartgold-nitrofs-1"
-#define KJ_ROM_GAME_CODE "IPKE"
-#define KJ_ROM_TITLE "POKEMON HG"
-#endif
+#define KJ_EDITION "platinum"
+#define KJ_PAK_BUILD_ID "platinum-nitrofs-1"
 
 /* The game stores the console's MAC address in the save and compares it on
- * load; one fixed address keeps every save "from this DS". */
-static const u8 MAC_ADDRESS[6] = { 0x00, 0x09, 0xBF, 0x48, 0x47, 0x53 };
-
-#define ROM_HEADER_SIZE 0x200
-#define ROM_TITLE_OFFSET 0x00
-#define ROM_GAME_CODE_OFFSET 0x0C
-#define ROM_MAKER_CODE_OFFSET 0x10
-#define ROM_DEVICE_SIZE_OFFSET 0x14
-#define ROM_VERSION_OFFSET 0x1E
+ * load; one fixed address keeps every save "from this DS". 00:09:BF is one
+ * of Nintendo's prefixes. */
+static const u8 MAC_ADDRESS[6] = { 0x00, 0x09, 0xBF, 0x50, 0x33, 0xD5 };
 
 const char *kj_ds_edition_name(void)
 {
@@ -80,20 +66,34 @@ const char *kj_ds_open_pack(const char *pak_path, const char *manifest_path)
     }
 }
 
+/* A failed GF_ASSERT in the game. The DS build ignores most of them; the
+ * port logs where they come from (look the address up in the program's
+ * .elf). The programs are linked with --wrap=ErrorHandling_AssertFail. */
+void __real_ErrorHandling_AssertFail(void);
+
+void __wrap_ErrorHandling_AssertFail(void)
+{
+    NitroPort_Log("[platinum] GF_ASSERT failed, called from %p", __builtin_return_address(0));
+    __real_ErrorHandling_AssertFail();
+}
+
 void kj_game_main(const kj_game_settings *settings)
 {
-    static u8 header[ROM_HEADER_SIZE];
+    CARDRomHeader header;
     NitroPortFirmware firmware;
 
-    memset(header, 0, sizeof(header));
-    memcpy(header + ROM_TITLE_OFFSET, KJ_ROM_TITLE, sizeof(KJ_ROM_TITLE) - 1);
-    memcpy(header + ROM_GAME_CODE_OFFSET, KJ_ROM_GAME_CODE, sizeof(KJ_ROM_GAME_CODE) - 1);
-    memcpy(header + ROM_MAKER_CODE_OFFSET, "01", 2);
-    header[ROM_DEVICE_SIZE_OFFSET] = 10; /* 128 MB card */
-    header[ROM_VERSION_OFFSET] = 0;
+    /* The cartridge header, as far as the game and the SDK read it: the
+     * game checks the maker code at boot (boot.c). Files come from the data
+     * pack, so the cartridge offsets mean nothing here. */
+    memset(&header, 0, sizeof(header));
+    memcpy(header.game_name, "POKEMON PL\0\0", 12);
+    header.game_code = 'C' | ('P' << 8) | ('U' << 16) | ((u32)'E' << 24);
+    header.maker_code = '0' | ('1' << 8);
+    header.device_size = 10;   /* 128 MB */
+    header.game_version = 1;
 
     memset(&firmware, 0, sizeof(firmware));
-    firmware.romHeader = header;
+    firmware.romHeader = &header;
     firmware.romHeaderSize = sizeof(header);
     firmware.nickname = settings->nickname;
     firmware.language = settings->language;
@@ -104,7 +104,11 @@ void kj_game_main(const kj_game_settings *settings)
     firmware.rtcOffset = 0;
     NitroPort_BootFirmware(&firmware);
 
-    NitroPort_SetOverlays(gHeartgoldOverlays, gHeartgoldOverlayCount);
+    NitroPort_SetOverlays(gPlatinumOverlays, gPlatinumOverlayCount);
+
+    /* The ARM7's services: the save chip, the clock, the touch screen and
+     * power management (sound, microphone and wireless are handled by the
+     * port's own virtual ARM7). */
     NitroPort_InitArm7Services();
 
     NitroPort_Log("[kj] starting %s", KJ_EDITION);
