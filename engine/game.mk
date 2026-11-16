@@ -330,7 +330,7 @@ $(OUT)/ds/%.o: $(ROOT)/%.c
 	@echo "  DS  $(<:$(ROOT)/%=%)"
 	@$(CC) $(ENGINE_DS_CFLAGS) -MMD -MP -c $< -o $@
 
-$(OUT)/ctr/%.o: $(ROOT)/%.c | $(BUILD_ID_H)
+$(OUT)/ctr/%.o: $(ROOT)/%.c $(BUILD_ID_H)
 	@mkdir -p $(dir $@)
 	@echo "  CTR $(<:$(ROOT)/%=%)"
 	@$(CC) $(ENGINE_CTR_CFLAGS) -MMD -MP -c $< -o $@
