@@ -176,6 +176,24 @@ Verified 2026-11-16, Old 3DS profile in Azahar 2126.2. "Implemented",
   run through, and the panel apps (map, bag, party, trainer case) are absent.
 - The screens pokeplatinum-3ds lays out in parts are not implemented.
 
+## Builds and packaging
+
+- `pwsh tools/build.ps1` writes the release program
+  `build/game/3ds/sinjoh-platinum.3dsx`; `-Profile 1` writes the instrumented
+  `build/game/3ds-prof/sinjoh-platinum-dbg.3dsx`; `-All` writes both. Each
+  profile has its own object trees (`build/game/3ds[-prof]`,
+  `engine/compat/*/build/3ds[-prof]`), so switching cannot reuse the other
+  profile's objects. The instrumented program's build ID carries `-dbg` and
+  its log has the `[perf]`/`[gpu]`/`[pace]`/`[snd*]` lines; the release has
+  none of the probes.
+- `python builder/prepare.py <rom> [--sd E:\]` is the one-step packager:
+  checks the dump, extracts, writes and re-checks `platinum.pak`, copies the
+  manifest, and stages both programs beside them as an SD-card root
+  (`3ds/kohjoh/`). `-o` (default `sinjoh-sd`) writes a tree to copy;
+  `builder/prepare.bat` is the Windows drag-and-drop wrapper.
+- The build ID is regenerated each build, so an artifact names the commit it
+  was really built from.
+
 ## Next
 
 1. 3D wide view: verify the enabled box test in a 3D field scene; the
