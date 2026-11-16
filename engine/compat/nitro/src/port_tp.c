@@ -35,8 +35,15 @@ void NitroPort_ResetTouchState(void)
     publish_touch(FALSE, 0, 0);
 }
 
+static BOOL sLastDown;
+
 void NitroPort_SetTouch(BOOL down, u16 x, u16 y)
 {
+    if (down && !sLastDown) {
+        NitroPort_Log("[touch] down %u,%u (auto %d)", (unsigned)x, (unsigned)y,
+                      (int)sAutoSampling);
+    }
+    sLastDown = down;
     publish_touch(down, x, y);
     if (sAutoSampling) {
         /* AUTO_SAMPLING packets don't carry END/RESULT_BIT. The original

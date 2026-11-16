@@ -1,0 +1,3 @@
+# Scripted touch on the title: script frames run at the publish rate (30/s),
+# so frame 800 is about 26 s, when the title is up.
+800-1600 TOUCH:128,96

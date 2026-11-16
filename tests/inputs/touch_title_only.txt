@@ -1,0 +1,3 @@
+# One long scripted touch on the title screen. No button presses: if the
+# title advances, the scripted touch path reaches the game.
+900-1100 TOUCH:120,77

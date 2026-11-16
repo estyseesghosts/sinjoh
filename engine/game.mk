@@ -323,7 +323,7 @@ PROGRAM_ELF := $(OUT)/sinjoh.elf
 PROGRAM := $(OUT)/sinjoh.3dsx
 
 $(PROGRAM_ELF): $(ENGINE_DS_OBJS) $(ENGINE_CTR_OBJS) $(SHADER_OBJS) $(OVERLAY_TABLE_C:.c=.o) \
-                $(GAME_HEADER_DEFS) $(WIFI_STUBS_O)
+                $(GAME_HEADER_DEFS) $(WIFI_STUBS_O) $(LIBNITRO) $(LIBNNS)
 	@mkdir -p $(dir $@)
 	$(file >$(OUT)/link.rsp,$(ENGINE_DS_OBJS) $(ENGINE_CTR_OBJS) $(SHADER_OBJS) $(GAME_OBJS) $(WIFI_STUBS_O))
 	@$(call native_rsp,$(OUT)/link.rsp)
