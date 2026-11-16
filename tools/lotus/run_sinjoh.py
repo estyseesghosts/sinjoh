@@ -83,6 +83,8 @@ def main() -> int:
     ap.add_argument("--frames", type=int, default=240)
     ap.add_argument("--hold", type=float, default=0.0,
                     help="seconds to leave the window open after the capture")
+    ap.add_argument("--play", action="store_true",
+                    help="start continuous running before the hold (live input)")
     ap.add_argument("--out", type=Path, default=Path("build/lotus/last"))
     ap.add_argument("--keep", action="store_true", help="do not stop the session")
     a = ap.parse_args()
@@ -137,6 +139,9 @@ def main() -> int:
         (a.out / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
         print(json.dumps(report["summary"], indent=2))
         print("saved:", ", ".join(saved) or "(none)")
+        if a.play:
+            payload(m.call("lotus_control", {"session": sid, "operation": "run"}))
+            print("running continuously; live input is the window's")
         if a.hold:
             print(f"holding the window for {a.hold:.0f}s ...")
             time.sleep(a.hold)
