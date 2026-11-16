@@ -309,10 +309,14 @@ BUILD_ID_H := $(OUT)/gen/build_id.h
 BUILD_SHA := $(shell git -C $(ROOT) rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
 BUILD_DIRTY := $(shell test -n "$$(git -C $(ROOT) status --porcelain 2>/dev/null)" && echo 1 || echo 0)
 
-$(BUILD_ID_H):
+$(BUILD_ID_H): FORCE
 	@mkdir -p $(dir $@)
 	@printf '/* Generated: the commit this program was built from. */\n#define HGSS_BUILD_ID "sinjoh-%s%s%s"\n#define HGSS_BUILD_SHA "%s"\n#define HGSS_BUILD_DIRTY %s\n' \
-	    '$(BUILD_SHA)' '$(if $(filter 1,$(BUILD_DIRTY)),-dirty,)' '$(if $(filter 1,$(PROFILE)),-dbg,)' '$(BUILD_SHA)' '$(BUILD_DIRTY)' > $@
+	    '$(BUILD_SHA)' '$(if $(filter 1,$(BUILD_DIRTY)),-dirty,)' '$(if $(filter 1,$(PROFILE)),-dbg,)' '$(BUILD_SHA)' '$(BUILD_DIRTY)' > $@.new
+	@if cmp -s $@.new $@; then rm -f $@.new; else mv $@.new $@; fi
+
+.PHONY: FORCE
+FORCE:
 
 ENGINE_CTR_CFLAGS := -std=gnu11 -O2 -g -Wall -Wno-unused-function \
                      -ffunction-sections -fdata-sections $(ARM_FLAGS) \
