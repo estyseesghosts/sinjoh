@@ -1,0 +1,16 @@
+build/
+*.o
+*.a
+*.elf
+*.3dsx
+*.cia
+*.smdh
+*.bnr
+*.pak
+*.nds
+*.sav
+*.log
+*.pica
+__pycache__/
+dist/
+data/

@@ -1,0 +1,25 @@
+# sinjoh upstream pins. Update deliberately, never track a moving branch.
+# Format: name url commit  (one per line; '#' comments)
+
+# Game source: the decompilation this port compiles. The patch stack under
+# patches/pokeplatinum applies on top of exactly this commit.
+decomp https://github.com/pret/pokeplatinum.git c248fb3f8cc9934ded800e489567c5c0eeee92eb
+
+# Reference projects (read, cited, selectively imported; see PROVENANCE.md).
+# The engine under engine/ is adapted from kohjoh; the game-side compatibility
+# work is derived from pokeplatinum-3ds's patch stack, not its renderer.
+kohjoh https://github.com/estyseesghosts/kohjoh.git fb0440a
+pokeplatinum-3ds https://github.com/GabeSud0/pokeplatinum-3ds.git c84883d
+coffeepot https://github.com/estyseesghosts/coffeepot.git 35b59f178e638506dcdfdf649651e20abf9fa8d4
+
+# Toolchain (devkitPro pacman package versions, checked against kohjoh).
+toolchain devkitARM r68-1 gcc-16.1.0 binutils-2.46.0 newlib-4.6.0.20260123-5
+toolchain libctru 2.7.1-1
+toolchain citro3d 1.7.1-2
+toolchain citro2d 1.7.0-1
+toolchain 3dstools 1.3.1-3
+toolchain picasso 2.7.2-3
+
+# Emulators used for integration testing (not timing authorities).
+emulator LOTUS v0.0.2 (software worker only; see docs/LOTUS.md)
+emulator Azahar 2126.2 (Vulkan for visual/performance runs)
