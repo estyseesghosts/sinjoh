@@ -1,88 +1,102 @@
-# LOTUS v0.0.2: what works, what does not
+# LOTUS v0.0.3
 
-Verified 2026-11-16 against `LOTUS-v0.0.2-windows-x64` on Windows 11, worker
-sources pinned in the release's `runtimes/*/build-manifest.json`
-(AZAHAR `5a3c702f…`, CITnLO `6361ddc3…`).
+Verified 2026-11-16 against `LOTUS-v0.0.3-windows-x64` on Windows 11. The
+workers are pinned in `runtimes/*/build-manifest.json` (CITnLO experimental
+`559f3f4d…`, AZAHAR integration `b4b9f0c…`). This replaces Azahar as the test
+frontend: it is windowed, it serves MCP on stdio, it can keep several sessions
+at once, and its CITnLO worker runs the **Vulkan** renderer.
 
-## MCP works, windowed or headless
+## Windowed, over MCP
 
-Both launchers serve the same MCP tools:
-`lotus_status`, `lotus_create_session`, `lotus_load`, `lotus_control`,
-`lotus_run_until` (1-600 frames), `lotus_input`, `lotus_capture`,
-`lotus_session_status`, `lotus_read_memory`, `lotus_registers`,
-`lotus_debug`, `lotus_focus_session`, `lotus_list_cards`,
-`lotus_list_sessions`, `lotus_gdb`, `lotus_trace`,
-`lotus_validate_scenario`.
+`lotus-desktop.exe --mcp <host.json>` opens the window and serves the same MCP
+tools on stdin/stdout, so the person watches the session the harness drives.
+`lotus-mcp.exe <config>` is the headless variant. A session handle expires when
+the server process exits; a primary card keeps its `sdmc/` data.
 
-`lotus_focus_session` is what makes a run watchable: the window shows that
-session while the harness drives it. `tools/lotus_mcp.py` is a small stdio
-client used for exactly this.
+`sinjoh-host.json` in the LOTUS folder approves both builds and prefers Vulkan:
+
+```json
+{
+  "worker": "<lotus>/runtimes/citnlo/ctr-worker.exe",
+  "storage_root": "<lotus>/data/citnlo/sessions",
+  "assets": {
+    "sinjoh": "<repo>/build/game/3ds/sinjoh-platinum.3dsx",
+    "sinjoh-dbg": "<repo>/build/game/3ds-prof/sinjoh-platinum-dbg.3dsx"
+  },
+  "asset_directories": {
+    "release": "<repo>/build/game/3ds",
+    "debug": "<repo>/build/game/3ds-prof"
+  },
+  "allow_control": true,
+  "prefer_vulkan": true,
+  "max_sessions": 4
+}
+```
+
+`prefer_vulkan` is the default; a refusal at load is reported as
+`renderer_fallback`. The session status reports `renderer: "vulkan"` and an
+empty fallback when it is the real thing. `graphics_api: 0` in a profile pins
+software for a reference run.
+
+## Driving it
 
 ```sh
-# Rewrite host.json for the windowed AZAHAR worker and approve a fixture.
-powershell -File launch.ps1 -Backend AZAHAR -Mode Desktop -Fixture app.3dsx -ConfigureOnly
+# Stage the programs, pack, manifest and save into a persistent card, and
+# optionally a script.txt for deterministic input.
+python tools/lotus/stage_card.py --card sinjoh --script tests/inputs/lotus_field.txt
 
-# Drive it from a script while the window shows the focused session.
-python tools/lotus_mcp.py --config <lotus>/data/azahar/host.json status
-python tools/lotus_mcp.py --config <lotus>/data/azahar/host.json \
-    call lotus_create_session '{"asset":"homebrew","kind":"secondary"}'
+# Open the window, create a primary session on that card, run N frames,
+# capture both screens as PNG and stop.
+python tools/lotus/run_sinjoh.py --asset sinjoh --card sinjoh --frames 900
+python tools/lotus/run_sinjoh.py --asset sinjoh-dbg --frames 600 --keep
 ```
 
-A session handle expires when the MCP server exits. A `secondary` card is
-disposable; a `primary` card persists. Sessions can run in parallel (the
-worker limit is four), which is why renderer speed matters here.
+`--hold SECONDS` leaves the window open after the capture; `--keep` also leaves
+the session running until the client exits. The process owns the session, so
+the run ends when the client does.
 
-## Vulkan cannot be forced in v0.0.2
+A primary card's guest SD is
+`<lotus>/data/citnlo/sessions/cards/<card>/sdmc/`; sinjoh reads the usual
+`sdmc:/3ds/kohjoh/` paths, so `stage_card.py` writes
+`.../cards/sinjoh/sdmc/3ds/kohjoh/`. A secondary session can copy that card for
+a disposable run, or start empty.
 
-The worker binaries are built with `-DENABLE_VULKAN=ON` and
-`-DENABLE_SOFTWARE_RENDERER=ON`, and the worker reports
-`worker supports software and Vulkan`. The frontend still pins the session
-profile:
+## Tools used
 
-- `native-manifest.json` records
-  `"backend": "azahar_native_software"` and
-  `"profile": "old3ds/software/hle/dsp-muted/ticks-0/time-2000-01-01"`
-  for every session, before and after any setting change.
-- The only renderer-like setting exposed over MCP is `graphics_api`
-  (`choices [0, 1, 2]`). Its consumer source is
-  `src/core/rpc/rpc_server.cpp:170` - the capture RPC - not
-  `src/core/frontend/emu_window.cpp`. Setting it to 1 is rejected with
-  `InvalidArgument: worker supports software and Vulkan`; 0 and 2 are accepted
-  and both still produce the `azahar_native_software` backend.
-- The pinned profile string in `lotus-desktop.exe`/`lotus-mcp.exe` contains
-  only `old3ds/software`.
+`lotus_status` (frontend, assets, cards), `lotus_create_session`
+(`kind: primary|secondary`, `card`, `asset`), `lotus_run_until` (1–600 frames,
+paused), `lotus_control` (`run`/`pause`/`reset`/`stop`), `lotus_session_status`,
+`lotus_capture`, `lotus_input`, `lotus_list_sessions`, `lotus_list_cards`,
+`lotus_focus_session`, `lotus_debug`, `lotus_registers`, `lotus_read_memory`,
+`lotus_gdb`, `lotus_validate_scenario`.
 
-So the portable v0.0.2 release cannot switch its worker to Vulkan without
-rebuilding the worker from its integration branch. That is out of scope for
-this repository.
+Exact option schemas: `python tools/lotus_mcp.py --config <host.json>
+--headless tools`.
 
-Consequence for sinjoh:
+## Captures
 
-- **Vulkan and visual/performance observation:** vanilla Azahar
-  (`C:\Program Files\Azahar\azahar.exe`), windowed, `graphics_api = Vulkan`.
-  This is the only accelerated renderer available on this machine.
-- **Deterministic frame-driven runs and parallel sessions:** LOTUS over MCP,
-  accepting that it is software and therefore slow. Use short frame counts
-  and bound each request to the 600-frame limit.
+`lotus_capture` returns two artifacts named `top` and `bottom`: **raw 32-bit
+BGRA**, 400x240 and 320x240 (384000 / 307200 bytes), not PNG. `run_sinjoh.py`
+converts them to 8-bit RGB PNG with a built-in writer, so the harness has no
+Pillow dependency.
 
-## Guest layout
+## First verified runs
 
-A session root is `data/<backend>/sessions/<handle>/` (`scratch/<handle>/`
-also appears); `sdmc/` maps to `sdmc:/`. For sinjoh the expected paths are:
+- 240 frames: windowed frontend, CITnLO, `renderer: "vulkan"`,
+  `renderer_fallback: null`, 240 frames paused; both captures correct.
+- 900 frames: the Game Freak frame, with the copyright gradient and red side
+  bands, pixel-for-pixel at 400x240. This is the same picture melonDS shows and
+  a second emulator's confirmation of the blend fix.
+- 1903 and 2600 frames with `tests/inputs/lotus_field.txt`: the session
+  advanced, but both captures were white. The card log stops at the end of the
+  opening, so the run had not reached the field; treat the white frame as an
+  unclassified transition until the script is checked. Not evidence about the
+  renderer.
 
-```
-sdmc:/3ds/sinjoh/data/platinum.pak
-sdmc:/3ds/sinjoh/data/platinum.manifest.json
-sdmc:/3ds/sinjoh/saves/platinum.sav
-sdmc:/3ds/sinjoh/script.txt
-sdmc:/3ds/sinjoh/logs/sinjoh.log
-```
+## Limits
 
-A session created with an asset loads it paused, so pack staging is:
-create, copy pack/manifest into `sdmc/`, `reset`, then run.
-
-## Not authoritative
-
-Neither LOTUS nor Azahar certifies O3DS timing. LOTUS's software renderer is far
-slower than the console; Azahar charges nothing for PICA vertex work. `[perf]`
-counters and instruction counts rank changes; hardware claims need hardware.
+LOTUS and Azahar are integration debuggers, not O3DS timing authorities.
+CITnLO's Vulkan path is fast on this host but does not model the console's GPU
+budget or CPU caches; `[perf]` counters and instruction counts rank changes,
+hardware claims need hardware. Audio is muted in this release. The worker's
+guest date/time can come from the host clock unless a run pins `init_clock`.

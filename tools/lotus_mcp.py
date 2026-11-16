@@ -20,7 +20,7 @@ import sys
 import threading
 from pathlib import Path
 
-LOTUS = Path(r"C:\Users\terezi\workdir\LOTUS-v0.0.2-windows-x64")
+LOTUS = Path(r"C:\Users\terezi\workdir\LOTUS-v0.0.3-windows-x64")
 
 
 class Mcp:
