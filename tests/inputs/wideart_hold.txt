@@ -1,0 +1,6 @@
+# No input: the copyright screen advances by itself and the title screen is
+# up around game frame 200-285 (the frames run at the publish rate, 30/s).
+# Hold there so a shot lands on the screen with the wide art's pictures.
+every: 10
+freeze 240 40
+end: 4000

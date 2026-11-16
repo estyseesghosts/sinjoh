@@ -5,6 +5,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "graphics/pica/gpu.h"
+
 /*
  * The 2D tile atlas: palette-expanded 8x8 DS tiles in one 1024x1024 RGBA5551
  * texture (16384 slots). RGBA5551 holds a DS colour exactly; alpha 0 is
@@ -64,7 +66,7 @@ kj_tile_ref kj_atlas_tile(uint32_t source_id, const uint8_t *tile, uint32_t offs
  * edge into the neighbouring atlas tile -- usually transparent, which showed
  * as one-pixel horizontal gaps between tile rows. The inset keeps every
  * sample inside its own tile. */
-#define KJ_ATLAS_UV_UNIT 16
+#define KJ_ATLAS_UV_UNIT KJ_UV_UNIT
 
 static inline void kj_atlas_slot_uv(uint16_t slot, int16_t *u0, int16_t *v0, int16_t *u1,
                                     int16_t *v1)

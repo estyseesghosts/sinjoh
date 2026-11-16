@@ -23,6 +23,7 @@
 
 #include "diagnostics/log.h"
 #include "diagnostics/perf.h"
+#include "graphics/g2d/wideart.h"
 #include "graphics/g3d/g3d.h"
 #include "graphics/pica/gpu.h"
 #include "graphics/pica/targets.h"
@@ -579,9 +580,7 @@ static void set_xform(const kj_target *t)
     const float half_w = t->width / 2.0f;
     C3D_FVUnifSet(GPU_VERTEX_SHADER, kj_gpu_uloc_2d_xform(), -t->scale / 120.0f, 1.0f,
                   -t->scale / half_w, 1.0f - t->offset_x / half_w);
-    C3D_FVUnifSet(GPU_VERTEX_SHADER, kj_gpu_uloc_2d_uvscale(),
-                  1.0f / (KJ_ATLAS_SIZE * KJ_ATLAS_UV_UNIT), -1.0f / (KJ_ATLAS_SIZE * KJ_ATLAS_UV_UNIT),
-                  0.0f, 1.0f);
+    kj_gpu_set_2d_uvscale(KJ_ATLAS_SIZE, KJ_ATLAS_SIZE);
 }
 
 typedef struct fx {
@@ -649,10 +648,47 @@ static void draw_quads(const drawable *d)
     }
 }
 
-static void draw_layer(const fx *f, int layer, const drawable *d, bool force_semi)
+static void restore_2d_state(const ctx *c, int sx0);
+
+/*
+ * A layer's band of its picture (the wide art), drawn over the layer's own
+ * pixels: the picture's texture is bound instead of the atlas's, and the
+ * scissor has to let the band in (it is outside the DS's picture).
+ */
+static void draw_band(const ctx *c, const drawable *band)
+{
+    if (band == NULL || band->count == 0 || kj_wideart_texture() == NULL) {
+        return;
+    }
+    kj_gpu_bind_texture(0, kj_wideart_texture());
+    kj_gpu_set_2d_uvscale(kj_wideart_texture_width(), kj_wideart_texture_height());
+    kj_gpu_scissor(c->target->width, 0, (int)(c->y0 * c->target->scale), c->target->width,
+                   (int)(c->y1 * c->target->scale));
+    draw_quads(band);
+#ifdef KJ_WIDEART_DEBUG
+    {
+        /* TEMPORARY: the wide art's texture over the whole canvas, to see
+         * whether the texture reaches the screen at all. */
+        uint32_t first;
+        kj_v2d *v = kj_gpu_quads_alloc(1, &first);
+        if (v != NULL) {
+            v[0] = (kj_v2d){ -32, 0, 1, 1, 255, 255, 255, 255 };
+            v[1] = (kj_v2d){ 288, 0, (int16_t)(512 * KJ_UV_UNIT - 1), 1, 255, 255, 255, 255 };
+            v[2] = (kj_v2d){ -32, 192, 1, (int16_t)(192 * KJ_UV_UNIT - 1), 255, 255, 255, 255 };
+            v[3] = (kj_v2d){ 288, 192, (int16_t)(512 * KJ_UV_UNIT - 1),
+                             (int16_t)(192 * KJ_UV_UNIT - 1), 255, 255, 255, 255 };
+            kj_gpu_draw_quads(first, 1);
+        }
+    }
+#endif
+    restore_2d_state(c, (int)(c->target->offset_x));
+}
+
+static void draw_layer(const ctx *c, const fx *f, int layer, const drawable *d, bool force_semi,
+                       const drawable *band, const drawable *edge)
 {
     const uint32_t count = d->count;
-    if (count == 0) {
+    if (count == 0 && (band == NULL || band->count == 0) && (edge == NULL || edge->count == 0)) {
         return;
     }
     const bool t2 = (f->bldcnt >> (8 + layer)) & 1;
@@ -673,7 +709,11 @@ static void draw_layer(const fx *f, int layer, const drawable *d, bool force_sem
             const uint8_t flags = (uint8_t)((t2 ? 1 : 0) | (t1 && effects && f->mode >= 2 ? 2 : 0));
             blend_off();
             stencil_write_all((uint8_t)(region | flags), rmask);
+            if (edge != NULL) {
+                draw_quads(edge);
+            }
             draw_quads(d);
+            draw_band(c, band);
 #ifndef HGSS_PROFILE_OFF
             ++s_stats.draws;
 #endif
@@ -683,12 +723,20 @@ static void draw_layer(const fx *f, int layer, const drawable *d, bool force_sem
         blend_alpha(f->eva, f->evb);
         C3D_StencilTest(true, GPU_EQUAL, region | 1u, rmask | 1u, 0x03);
         C3D_StencilOp(GPU_STENCIL_KEEP, GPU_STENCIL_KEEP, t2 ? GPU_STENCIL_KEEP : GPU_STENCIL_INVERT);
+        if (edge != NULL) {
+            draw_quads(edge);
+        }
         draw_quads(d);
+        draw_band(c, band);
         /* opaque elsewhere */
         blend_off();
         C3D_StencilTest(true, GPU_EQUAL, region, rmask | 1u, 0x01);
         C3D_StencilOp(GPU_STENCIL_KEEP, GPU_STENCIL_KEEP, t2 ? GPU_STENCIL_INVERT : GPU_STENCIL_KEEP);
+        if (edge != NULL) {
+            draw_quads(edge);
+        }
         draw_quads(d);
+        draw_band(c, band);
 #ifndef HGSS_PROFILE_OFF
         s_stats.draws += 2;
 #endif
@@ -696,8 +744,7 @@ static void draw_layer(const fx *f, int layer, const drawable *d, bool force_sem
 }
 
 /* A rectangle (DS pixels) as one untextured quad in the arena. */
-static bool rect_quad(int x0, int y0, int x1, int y1, uint32_t rgba, uint32_t *first)
-{
+static bool rect_quad(int x0, int y0, int x1, int y1, uint32_t rgba, uint32_t *first){
     kj_v2d *v = kj_gpu_quads_alloc(1, first);
     if (v == NULL) {
         return false;
@@ -819,7 +866,426 @@ static int span_end(const kj_line_regs *lines, int engine, int y0)
     return y;
 }
 
-/* ------------------------------------------------------ retained layers */
+/* ------------------------------------------------------------- art keys */
+
+static const uint8_t *text_ext_src(const ctx *c, int bg);
+
+/* The extended palette slot a BG's art key reads (BG0 and BG1 can take slot
+ * 2 or 3, BGxCNT bit 13; the others their own). */
+static const uint8_t *bg_art_ext(const ctx *c, int bg)
+{
+    const uint16_t cnt = r16(c->regs, 0x08 + 2 * bg);
+    const int slot = bg < 2 ? bg + (((cnt >> 13) & 1) ? 2 : 0) : bg;
+    return ext_bg_slot(c->in, c->engine, slot);
+}
+
+/*
+ * A layer's art key: a hash of the layer's own art - its map, the tiles the
+ * map uses, their palettes - not of where the game put it or how it is
+ * scrolled. The wide art's pictures are named by it (a picture shows
+ * whenever its layer does), so the hash has to be the one they were named
+ * with: pokeplatinum-3ds's BgKey, so the pictures in wideart/ are found.
+ * That is FNV-1a over the same words, in the same order.
+ */
+
+#define ART_KEY_START 0xcbf29ce484222325ull
+
+/* The kinds, as the pictures' hash knows them. */
+enum {
+    ART_NONE = 0,
+    ART_TEXT = 1,
+    ART_AFFINE = 2,
+    ART_EXTENDED = 3
+};
+
+static uint64_t art_key_add(uint64_t h, uint32_t v)
+{
+    for (int i = 0; i < 4; ++i) {
+        h = (h ^ (v & 0xFFu)) * 0x100000001b3ull;
+        v >>= 8;
+    }
+    return h;
+}
+
+static uint16_t pltt_color(const uint8_t *pltt, uint32_t index)
+{
+    return (uint16_t)(r16(pltt, index * 2u) & 0x7FFFu);
+}
+
+static const int s_text_sizes[4][2] = { { 256, 256 }, { 512, 256 }, { 256, 512 }, { 512, 512 } };
+
+/* The key of a BG's art, or 0 for a layer with none (a bitmap, the 3D). */
+static uint64_t bg_art_key(const ctx *c, int bg)
+{
+    const uint16_t cnt = r16(c->regs, 0x08 + 2 * bg);
+    const uint32_t dispcnt = c->dispcnt;
+    const int mode = (int)(dispcnt & 7u);
+    int kind;
+
+    if (bg == 0 && c->engine == 0 && (dispcnt & 8u)) {
+        return 0; /* the 3D layer */
+    }
+    switch (mode) {
+    case 0: kind = ART_TEXT; break;
+    case 1: kind = bg < 3 ? ART_TEXT : ART_AFFINE; break;
+    case 2: kind = bg < 2 ? ART_TEXT : ART_AFFINE; break;
+    case 3: kind = bg < 3 ? ART_TEXT : ART_EXTENDED; break;
+    case 4: kind = bg < 2 ? ART_TEXT : (bg == 2 ? ART_AFFINE : ART_EXTENDED); break;
+    case 5: kind = bg < 2 ? ART_TEXT : ART_EXTENDED; break;
+    default: return 0;
+    }
+
+    /* The kind decides the tile size and whether the map's entries are 16
+     * bits wide, exactly as the pictures' hash has it (an affine BG is 8
+     * bits a pixel whatever its CNT says; an extended BG with 8 bits a
+     * pixel is a bitmap and has no key). */
+    bool bpp8, wide16;
+    uint32_t entries;
+    if (kind == ART_TEXT) {
+        bpp8 = (cnt & 0x80u) != 0;
+        wide16 = true;
+        entries = (uint32_t)(s_text_sizes[cnt >> 14][0] / 8) * (uint32_t)(s_text_sizes[cnt >> 14][1] / 8);
+    } else if (kind == ART_AFFINE || (kind == ART_EXTENDED && !(cnt & 0x80u))) {
+        bpp8 = true;
+        wide16 = kind == ART_EXTENDED;
+        const uint32_t side = (128u << (cnt >> 14)) / 8u;
+        entries = side * side;
+    } else {
+        return 0; /* a bitmap */
+    }
+
+    const uint32_t mask = c->bg_vram_size - 1u;
+    uint32_t char_base = ((cnt >> 2) & 15u) * 0x4000u;
+    uint32_t screen_base = ((cnt >> 8) & 31u) * 0x800u;
+    if (c->engine == 0) {
+        char_base += ((dispcnt >> 24) & 7u) * 0x10000u;
+        screen_base += ((dispcnt >> 27) & 7u) * 0x10000u;
+    }
+
+    uint64_t h = ART_KEY_START;
+    h = art_key_add(h, (uint32_t)kind | ((uint32_t)(cnt & 0xC080u) << 8));
+    uint32_t used[1024 / 32];
+    uint32_t banks = 0;
+    memset(used, 0, sizeof(used));
+    for (uint32_t i = 0; i < entries; ++i) {
+        const uint32_t entry = wide16 ? r16(c->bg_vram, (screen_base + i * 2u) & mask)
+                                      : c->bg_vram[(screen_base + i) & mask];
+        const uint32_t tile = wide16 ? entry & 0x3FFu : entry;
+        h = art_key_add(h, entry);
+        used[tile >> 5] |= 1u << (tile & 31u);
+        if (wide16) {
+            banks |= 1u << (entry >> 12);
+        }
+    }
+    const uint32_t tile_bytes = bpp8 ? 64u : 32u;
+    for (uint32_t i = 0; i < 1024; ++i) {
+        if (!(used[i >> 5] & (1u << (i & 31u)))) {
+            continue;
+        }
+        for (uint32_t k = 0; k < tile_bytes; k += 4) {
+            h = art_key_add(h, r32(c->bg_vram, (char_base + i * tile_bytes + k) & mask));
+        }
+    }
+    const uint8_t *bg_pltt = (const uint8_t *)pltt_ptr(c->in->mem, c->engine, 0);
+    if (!bpp8) {
+        for (uint32_t i = 0; i < 16; ++i) {
+            if (banks & (1u << i)) {
+                for (uint32_t k = 0; k < 16; ++k) {
+                    h = art_key_add(h, pltt_color(bg_pltt, i * 16u + k));
+                }
+            }
+        }
+    } else {
+        const uint8_t *ext = (dispcnt & (1u << 30)) && wide16 ? bg_art_ext(c, bg) : NULL;
+        if (ext != NULL) {
+            for (uint32_t i = 0; i < 16; ++i) {
+                if (banks & (1u << i)) {
+                    for (uint32_t k = 0; k < 256; ++k) {
+                        h = art_key_add(h, pltt_color(ext + (i << 9), k));
+                    }
+                }
+            }
+        } else {
+            for (uint32_t i = 0; i < 256; ++i) {
+                h = art_key_add(h, pltt_color(bg_pltt, i));
+            }
+        }
+    }
+    return h != 0 ? h : 1;
+}
+
+/* -------------------------------------------------------------- bands */
+
+/*
+ * The band's fallback when no picture covers it: the layer's outermost
+ * column carried on, pokeplatinum-3ds's "a plain edge goes on" (REMASTER.md,
+ * The wider screen). The edge tile of each 8-line row is sampled at the
+ * screen's edge column and stretched across the 32-pixel band, so the band
+ * continues the picture's border, window frame or fade instead of showing
+ * the backdrop. Atlas work only: no readback, no per-pixel CPU path.
+ */
+static void edge_band_quads(const ctx *c, int bg, uint32_t *first, uint32_t *count)
+{
+    *first = 0;
+    *count = 0;
+    if (c->screen != KJ_SCREEN_TOP || bg < 0 || bg > 3) {
+        return;
+    }
+    const int mode = (int)(c->dispcnt & 7u);
+    bool text = false;
+    switch (mode) {
+    case 0: text = true; break;
+    case 1: text = bg < 3; break;
+    case 2: text = bg < 2; break;
+    case 3: text = bg < 3; break;
+    case 4: text = bg < 2; break;
+    case 5: text = bg < 2; break;
+    default: break;
+    }
+    if (!text) {
+        return; /* affine and extended maps: the map's own placement decides */
+    }
+    const uint16_t cnt = r16(c->regs, 0x08 + 2 * bg);
+    const int hofs = r16(c->regs, 0x10 + 4 * bg) & 0x1FF;
+    const int vofs = r16(c->regs, 0x12 + 4 * bg) & 0x1FF;
+    const int size = cnt >> 14;
+    const int w = (size & 1) ? 512 : 256;
+    const int h = (size & 2) ? 512 : 256;
+    const bool bpp8 = (cnt & 0x80) != 0;
+    uint32_t char_base = ((cnt >> 2) & 15u) * 0x4000u;
+    uint32_t scr_base = ((cnt >> 8) & 31u) * 0x800u;
+    if (c->engine == 0) {
+        char_base += ((c->dispcnt >> 24) & 7u) * 0x10000u;
+        scr_base += ((c->dispcnt >> 27) & 7u) * 0x10000u;
+    }
+    const bool ext = bpp8 && (c->dispcnt & (1u << 30));
+    const int ext_slot = bg < 2 ? bg + (((cnt >> 13) & 1) ? 2 : 0) : bg;
+    const uint32_t tile_bytes = bpp8 ? 64u : 32u;
+    const uint32_t mask = c->bg_vram_size - 1u;
+    const uint32_t source = (uint32_t)(c->engine * 2);
+    const int sy0 = c->y0 & ~7;
+    const int sy1 = (c->y1 + 7) & ~7;
+    const uint32_t rows = (uint32_t)((sy1 - sy0 + 7) / 8);
+    if (rows == 0) {
+        return;
+    }
+    kj_v2d *v = kj_gpu_quads_alloc(rows * 2u, first);
+    if (v == NULL) {
+        return;
+    }
+    uint32_t n = 0;
+    for (int sy = sy0; sy < sy1; sy += 8) {
+        const int my = (sy + vofs) & (h - 1);
+        const uint32_t row_base = scr_base + (uint32_t)((my >> 8) * (w >> 8)) * 0x800u +
+                                  (uint32_t)((my & 255) >> 3) * 64u;
+        for (int side = 0; side < 2; ++side) {
+            const int mx = ((side ? 248 : 0) + hofs) & (w - 1);
+            const uint32_t addr = (row_base + (uint32_t)(mx >> 8) * 0x800u +
+                                   (uint32_t)((mx & 255) >> 3) * 2u) & mask;
+            const uint16_t entry = (uint16_t)(c->bg_vram[addr] | (c->bg_vram[addr + 1] << 8));
+            const uint32_t toff = (char_base + (entry & 0x3FFu) * tile_bytes) & mask;
+            const int pbank = entry >> 12;
+            uint32_t pal_id;
+            kj_palette *pal;
+            if (!bpp8) {
+                pal = pal_4bpp(c->in, c->engine, 0, pbank, &pal_id);
+            } else if (ext) {
+                pal = pal_ext_bg(c->in, c->engine, ext_slot, pbank, &pal_id);
+            } else {
+                pal = pal_256(c->in, c->engine, 0, &pal_id);
+            }
+            const kj_tile_ref t =
+                kj_atlas_tile(source, c->bg_vram + toff, toff, bpp8, pal, pal_id);
+            if (!t.valid || t.transparent) {
+                continue;
+            }
+            int16_t u0, v0, u1, v1;
+            kj_atlas_slot_uv(t.slot, &u0, &v0, &u1, &v1);
+            const bool hf = ((entry >> 10) & 1) != 0;
+            const bool vf = ((entry >> 11) & 1) != 0;
+            /* the screen's edge column inside the tile (flips considered) */
+            const int col = side ? (hf ? 0 : 7) : (hf ? 7 : 0);
+            const int16_t u = (int16_t)(u0 + col * 16 + 8);
+            const int16_t vt = (int16_t)(v0 + (vf ? 7 * 16 : 0) + 8);
+            const int16_t vb = (int16_t)(v0 + (vf ? 0 : 7 * 16) + 8);
+            const int x = side ? 256 : -32;
+            kj_v2d *q = v + n * 4u;
+            q[0] = (kj_v2d){ (int16_t)x, (int16_t)sy, u, vt, 255, 255, 255, 255 };
+            q[1] = (kj_v2d){ (int16_t)(x + 32), (int16_t)sy, u, vt, 255, 255, 255, 255 };
+            q[2] = (kj_v2d){ (int16_t)x, (int16_t)(sy + 8), u, vb, 255, 255, 255, 255 };
+            q[3] = (kj_v2d){ (int16_t)(x + 32), (int16_t)(sy + 8), u, vb, 255, 255, 255, 255 };
+            ++n;
+        }
+    }
+    *count = n;
+}
+
+/* ---------------------------------------------------------- the wide art */
+
+/*
+ * The wide art: the hand-drawn bands beside the DS's picture (wideart.h).
+ *
+ * The remaster's upper screen is 32 DS pixels wider on each side than the
+ * DS's picture, and the game draws nothing there. A layer that has a
+ * picture shows it: the picture's own bands, moved with the layer's scroll.
+ * The picture is found by the layer's art key (bg_art_key), so it shows
+ * whenever that layer does, on any visit to that screen.
+ *
+ * The picture's middle (the DS's own picture, 256 pixels of it) is not
+ * drawn: the layer's own tiles are there already, and where the picture
+ * says "the game's own" (its marker) the texel is transparent, so the
+ * layer's own pixel shows through it. What the game draws past the DS's
+ * edge (a map going on) is not drawn into the band: that is the port's own
+ * rule's work (docs/PORTING.md, the wide screen), and it is not done yet.
+ *
+ * The wide canvas: 320 DS pixels, the DS's picture at x 32..287, the bands
+ * at 0..31 and 288..319.
+ */
+
+#define WIDE_CANVAS_W 320
+#define WIDE_BAND_W 32
+#define WIDE_ORIGIN 32 /* the DS's picture starts here */
+
+/* How far the layer may have scrolled from where the picture was made and
+ * still show its bands (pokeplatinum-3ds's ART_REST). */
+#define ART_REST 8
+
+/* The wide art is only on the upper screen, and only if the build made
+ * any pictures. */
+static bool wide_art_on(const ctx *c)
+{
+    return c->screen == KJ_SCREEN_TOP && kj_wideart_count() > 0;
+}
+
+/* The layers' art keys, and which of them have a picture: said once per
+ * key, so the log shows what the pictures are looked up by. */
+static uint64_t s_logged_key[2][4];
+static bool s_logged[2][4];
+
+/* The bands drawn, said once per key and scroll. */
+static uint64_t s_band_key[2][4];
+static int s_band_dx[2][4];
+static bool s_band_logged[2][4];
+
+static void log_art_key(const ctx *c, int bg, uint64_t key)
+{
+    if (key == 0) {
+        return;
+    }
+    const bool known = s_logged[c->engine][bg] && s_logged_key[c->engine][bg] == key;
+    if (known) {
+        return; /* said already: the log shows each key once */
+    }
+    const bool has = kj_wideart_find(key) != NULL;
+    s_logged[c->engine][bg] = true;
+    s_logged_key[c->engine][bg] = key;
+    kj_log("[wide art] engine %d (%s) bg %d key %016llx%s", c->engine,
+           c->screen == KJ_SCREEN_TOP ? "top" : "bottom", bg, (unsigned long long)key,
+           has ? " (a picture)" : "");
+}
+
+/* A layer's picture, drawn in its bands: said once per key and scroll. */
+static void log_band(const ctx *c, int bg, uint64_t key, int dx)
+{
+    if (s_band_logged[c->engine][bg] && s_band_key[c->engine][bg] == key &&
+        s_band_dx[c->engine][bg] == dx) {
+        return;
+    }
+    s_band_logged[c->engine][bg] = true;
+    s_band_key[c->engine][bg] = key;
+    s_band_dx[c->engine][bg] = dx;
+    kj_log("[wide art] engine %d bg %d band key %016llx scrolled %d", c->engine, bg,
+           (unsigned long long)key, dx);
+}
+
+/* One band: a rectangle of the picture's texture, at the canvas's x. */
+static void put_band_quad(kj_v2d *v, int x, int y, int w, int h, int tx, int ty)
+{
+    const int16_t u0 = (int16_t)(tx * KJ_UV_UNIT + 1);
+    const int16_t u1 = (int16_t)((tx + w) * KJ_UV_UNIT - 1);
+    const int16_t v0 = (int16_t)(ty * KJ_UV_UNIT + 1);
+    const int16_t v1 = (int16_t)((ty + h) * KJ_UV_UNIT - 1);
+    v[0] = (kj_v2d){ (int16_t)x, (int16_t)y, u0, v0, 255, 255, 255, 255 };
+    v[1] = (kj_v2d){ (int16_t)(x + w), (int16_t)y, u1, v0, 255, 255, 255, 255 };
+    v[2] = (kj_v2d){ (int16_t)x, (int16_t)(y + h), u0, v1, 255, 255, 255, 255 };
+    v[3] = (kj_v2d){ (int16_t)(x + w), (int16_t)(y + h), u1, v1, 255, 255, 255, 255 };
+}
+
+/*
+ * The bands of a layer's picture, as quads. The picture's content is at
+ * the canvas's x + dx (dx: how far the layer has scrolled since the
+ * picture was made, to the right), so the picture's left band (its x 0..31)
+ * is at the canvas's x -dx, and the canvas's band shows the picture's band
+ * where they meet. What is left of the canvas's band is the picture's
+ * middle: the game's own, which the layer draws itself.
+ */
+static void band_quads(const kj_wideart_pic *pic, int dx, drawable *out)
+{
+    uint32_t first;
+    kj_v2d *v;
+
+    out->base = NULL;
+    out->count = 0;
+    v = kj_gpu_quads_alloc(2, &first);
+    if (v == NULL) {
+        return;
+    }
+    const int bh = pic->band_h;
+    uint32_t n = 0;
+
+    /* the left band: the picture's x 0..31 */
+    int lo = dx > 0 ? 0 : -dx;
+    int hi = dx > 0 ? WIDE_BAND_W - dx : WIDE_BAND_W;
+    if (hi > WIDE_BAND_W) {
+        hi = WIDE_BAND_W;
+    }
+    if (hi > lo) {
+        put_band_quad(v + n * 4u, lo - WIDE_ORIGIN, 0, hi - lo, bh, pic->left_x + (lo + dx), pic->left_y);
+        ++n;
+    }
+
+    /* the right band: the picture's x 288..319 */
+    const int rx0 = WIDE_CANVAS_W - WIDE_BAND_W;
+    lo = dx > 0 ? rx0 : rx0 - dx;
+    hi = dx > 0 ? WIDE_CANVAS_W - dx : WIDE_CANVAS_W;
+    if (hi > WIDE_CANVAS_W) {
+        hi = WIDE_CANVAS_W;
+    }
+    if (hi > lo) {
+        put_band_quad(v + n * 4u, lo - WIDE_ORIGIN, 0, hi - lo, bh, pic->right_x + (lo + dx - rx0),
+                      pic->right_y);
+        ++n;
+    }
+
+    out->first = first;
+    out->count = n;
+}
+
+/*
+ * A layer's picture: the one made nearest where the layer is now, and how
+ * far it has scrolled since. The bands show while the layer is across from
+ * where the picture was made (a few pixels either way); up and down doesn't
+ * matter (a layer that bobs keeps its bands).
+ */
+static const kj_wideart_pic *layer_picture(const ctx *c, int bg, uint64_t key, int *dx_out)
+{
+    const uint16_t cnt = r16(c->regs, 0x08 + 2 * bg);
+    const int map_w = s_text_sizes[cnt >> 14][0];
+    const int map_h = s_text_sizes[cnt >> 14][1];
+    const int cur_h = r16(c->regs, 0x10 + 4 * bg) & 0x1FF;
+    const int cur_v = r16(c->regs, 0x12 + 4 * bg) & 0x1FF;
+    const kj_wideart_pic *pic = kj_wideart_find_near(key, cur_h, cur_v, map_w, map_h, 256, 192, dx_out);
+
+    if (pic == NULL) {
+        return NULL;
+    }
+    if (!(pic->flags & KJ_WIDE_ART_LOOP) && (*dx_out < -ART_REST || *dx_out > ART_REST)) {
+        return NULL; /* the layer is elsewhere: nothing beyond the DS's edges */
+    }
+    return pic;
+}
+
+/* ------------------------------------------------------- retained layers */
 
 /*
  * Retained layers (OPT-002/OPT-005). When a frame has no per-line register
@@ -837,6 +1303,7 @@ static int span_end(const kj_line_regs *lines, int engine, int y0)
 typedef struct layer_cache {
     bool valid;
     uint8_t key[16];
+    uint64_t art_key;  /* the layer's art key (the wide art's pictures) */
     uint16_t pal[256]; /* the layer's palette (BG or OBJ) as built */
     uint8_t map[MAP_MAX];
     uint32_t map_off, map_len;
@@ -942,7 +1409,7 @@ static const uint8_t *text_ext_src(const ctx *c, int bg)
 }
 
 /* A text BG, retained when possible. */
-static bool text_bg_retained(const ctx *c, int bg, drawable *out)
+static bool text_bg_retained(const ctx *c, int bg, drawable *out, uint64_t *art_key)
 {
     layer_cache *lc = &s_bg_cache[c->engine][bg];
     const uint16_t *pal = pltt_ptr(c->in->mem, c->engine, 0);
@@ -958,6 +1425,7 @@ static bool text_bg_retained(const ctx *c, int bg, drawable *out)
         chars_same(lc, c->bg_vram)) {
         out->base = lc->quads;
         out->count = lc->count;
+        *art_key = lc->art_key;
 #ifndef HGSS_PROFILE_OFF
         ++s_reused_layers;
 #endif
@@ -985,6 +1453,12 @@ static bool text_bg_retained(const ctx *c, int bg, drawable *out)
     }
     chars_keep(lc, c->bg_vram, r.char_lo, r.char_hi);
     lc->count = r.count;
+    /* The art key is a hash of the same art the layer was built from, so it
+     * changes with it: it is worked out when the layer is built. The
+     * cache is per engine, not per screen, so the key is worked out
+     * whenever the build made any pictures. */
+    lc->art_key = kj_wideart_count() > 0 ? bg_art_key(c, bg) : 0;
+    *art_key = lc->art_key;
     out->base = lc->quads;
     out->count = r.count;
     ++s_rebuilt_layers;
@@ -1075,6 +1549,9 @@ void kj_g2d_begin_frame(void)
 typedef struct prepared {
     drawable bg[4];
     bool bg_ok[4];
+    uint64_t bg_key[4];      /* the layer's art key (the wide art's pictures) */
+    drawable bg_band[4];     /* the layer's picture's bands, if it has one */
+    drawable bg_edge[4];     /* the layer's edge colour carried into the bands */
     drawable obj[8]; /* priority * 2 + semi */
     bool obj_ok;
     bool all_reused;
@@ -1112,7 +1589,7 @@ static void prepare_span(const ctx *c, bool retain, prepared *pr)
             continue;
         }
         if (!affine && !ext16 && retain) {
-            pr->bg_ok[bg] = text_bg_retained(c, bg, &pr->bg[bg]);
+            pr->bg_ok[bg] = text_bg_retained(c, bg, &pr->bg[bg], &pr->bg_key[bg]);
         } else {
             run r;
             memset(&r, 0, sizeof(r));
@@ -1128,7 +1605,26 @@ static void prepare_span(const ctx *c, bool retain, prepared *pr)
                 pr->bg[bg].count = r.count;
                 pr->bg_ok[bg] = true;
             }
+            if (!affine && !ext16 && kj_wideart_count() > 0) {
+                pr->bg_key[bg] = bg_art_key(c, bg);
+            }
             ++s_rebuilt_layers;
+        }
+        if (pr->bg_ok[bg]) {
+            uint32_t ef, ec;
+            edge_band_quads(c, bg, &ef, &ec);
+            pr->bg_edge[bg].base = NULL;
+            pr->bg_edge[bg].first = ef;
+            pr->bg_edge[bg].count = ec;
+        }
+        if (pr->bg_ok[bg] && wide_art_on(c)) {
+            log_art_key(c, bg, pr->bg_key[bg]);
+            int dx = 0;
+            const kj_wideart_pic *pic = layer_picture(c, bg, pr->bg_key[bg], &dx);
+            if (pic != NULL) {
+                band_quads(pic, dx, &pr->bg_band[bg]);
+                log_band(c, bg, pr->bg_key[bg], dx);
+            }
         }
 #ifndef HGSS_PROFILE_OFF
         s_stats.bg_quads += pr->bg[bg].count;
@@ -1165,8 +1661,12 @@ static void prepare_span(const ctx *c, bool retain, prepared *pr)
 
 static void restore_2d_state(const ctx *c, int sx0)
 {
-    kj_gpu_scissor(c->target->width, sx0, (int)(c->y0 * c->target->scale),
-                   sx0 + (int)(256 * c->target->scale), (int)(c->y1 * c->target->scale));
+    (void)sx0;
+    /* The wide canvas: the whole target, so the edge bands and the wide
+     * art may draw beside the DS's picture (the DS's own quads still stay
+     * inside it). */
+    kj_gpu_scissor(c->target->width, 0, (int)(c->y0 * c->target->scale), c->target->width,
+                   (int)(c->y1 * c->target->scale));
     kj_gpu_use_program(KJ_PROGRAM_2D);
     set_xform(c->target);
     kj_gpu_bind_texture(0, kj_atlas_texture());
@@ -1207,12 +1707,12 @@ static void draw_span(ctx *c, const prepared *pr, bool draw_3d, bool *drew_3d)
                 continue;
             }
             if (pr->bg_ok[bg]) {
-                draw_layer(&f, bg, &pr->bg[bg], false);
+                draw_layer(c, &f, bg, &pr->bg[bg], false, &pr->bg_band[bg], &pr->bg_edge[bg]);
             }
         }
         if (pr->obj_ok) {
-            draw_layer(&f, LAYER_OBJ, &pr->obj[p * 2], false);
-            draw_layer(&f, LAYER_OBJ, &pr->obj[p * 2 + 1], true);
+            draw_layer(c, &f, LAYER_OBJ, &pr->obj[p * 2], false, NULL, NULL);
+            draw_layer(c, &f, LAYER_OBJ, &pr->obj[p * 2 + 1], true, NULL, NULL);
         }
     }
     brightness_pass(&f);
@@ -1341,11 +1841,18 @@ void kj_screen_draw(int screen, int engine, const kj_frame_input *in)
 bool kj_g2d_init(void)
 {
     memset(s_pal, 0, sizeof(s_pal));
-    return kj_gpu_init() && kj_atlas_init();
+    if (!kj_gpu_init() || !kj_atlas_init()) {
+        return false;
+    }
+    /* The wide art: the build may have made no pictures (the wideart folder
+     * empty), and then there are none to draw. */
+    kj_wideart_init();
+    return true;
 }
 
 void kj_g2d_exit(void)
 {
+    kj_wideart_exit();
     kj_atlas_exit();
     kj_gpu_exit();
 }

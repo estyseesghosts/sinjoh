@@ -246,8 +246,10 @@ $(OVERLAY_TABLE_C): $(GAME_HEADER_DEFS)
 
 GAME_OBJS_RSP := $(OUT)/game_objs.rsp
 # devkitARM's tools are native Windows programs: response-file contents are
-# not path-converted by MSYS, so spell them as C:/... there.
-native_rsp = sed -e 's|^/\([a-zA-Z]\)/|\U\1:/|' -e 's| /\([a-zA-Z]\)/| \U\1:/|g' $(1) > $(1).win
+# not path-converted by MSYS, so spell them as C:/... there. cygpath -f maps
+# the MSYS mount (/home/<user>, /c/...) back to the drive it lives on, which
+# the old leading-/x/ sed could not do.
+native_rsp = tr ' ' '\n' < $(1) | cygpath -w -m -f - | tr '\n' ' ' > $(1).win
 write_game_objs_rsp = $(file >$(GAME_OBJS_RSP),$(GAME_OBJS) $(WIFI_STUBS_O))
 
 $(LIB): $(GAME_HEADER_DEFS) $(WIFI_STUBS_O)
@@ -275,6 +277,15 @@ ENGINE_CTR_OBJS := $(ENGINE_CTR_SRCS:$(ROOT)/%.c=$(OUT)/ctr/%.o)
 SHADER_SRCS := $(sort $(wildcard $(ROOT)/engine/graphics/pica/shaders/*.v.pica))
 SHADER_OBJS := $(foreach s,$(SHADER_SRCS),$(OUT)/shaders/$(notdir $(basename $(basename $(s))))_shbin.o)
 
+# The wide art: the hand-drawn bands for the wider upper screen. The
+# pictures are made into one blob at build time (the PNGs are decoded, cut
+# and laid out here, not on the console) and embedded in the program.
+WIDEART_DIR  := $(ROOT)/wideart
+WIDEART_BIN  := $(ROOT)/build/wideart/wideart.bin
+WIDEART_S    := $(OUT)/wideart/wideart_bin.s
+WIDEART_O    := $(OUT)/wideart/wideart_bin.o
+WIDEART_PNGS := $(wildcard $(WIDEART_DIR)/*.png)
+
 DEVKITPRO ?= /opt/devkitpro
 DEVKITARM ?= $(DEVKITPRO)/devkitARM
 PICASSO := $(DEVKITPRO)/tools/bin/picasso
@@ -299,6 +310,7 @@ $(BUILD_ID_H):
 ENGINE_CTR_CFLAGS := -std=gnu11 -O2 -g -Wall -Wno-unused-function \
                      -ffunction-sections -fdata-sections $(ARM_FLAGS) \
                      $(if $(filter 0,$(PROFILE)),-DHGSS_PROFILE_OFF) \
+                     $(if $(filter 1,$(WIDEART_DEBUG)),-DKJ_WIDEART_DEBUG) \
                      -I$(DEVKITPRO)/libctru/include -I$(ROOT)/engine \
                      -I$(ROOT)/engine/runtime -I$(OUT)/gen
 
@@ -319,13 +331,23 @@ $(OUT)/shaders/%_shbin.o: $(ROOT)/engine/graphics/pica/shaders/%.v.pica
 	@$(BIN2S) $(OUT)/shaders/$*.shbin > $(OUT)/shaders/$*_shbin.s
 	@$(ARM_AS) -o $@ $(OUT)/shaders/$*_shbin.s
 
+$(WIDEART_BIN): $(ROOT)/tools/wideart/pack_wideart.py $(WIDEART_PNGS)
+	@mkdir -p $(dir $@)
+	@echo "  WIDEART $(notdir $@)"
+	@python3 $(ROOT)/tools/wideart/pack_wideart.py --source $(WIDEART_DIR) --output $@
+
+$(WIDEART_O): $(WIDEART_BIN)
+	@mkdir -p $(dir $@)
+	@$(BIN2S) $(WIDEART_BIN) > $(WIDEART_S)
+	@$(ARM_AS) -o $@ $(WIDEART_S)
+
 PROGRAM_ELF := $(OUT)/sinjoh.elf
 PROGRAM := $(OUT)/sinjoh.3dsx
 
-$(PROGRAM_ELF): $(ENGINE_DS_OBJS) $(ENGINE_CTR_OBJS) $(SHADER_OBJS) $(OVERLAY_TABLE_C:.c=.o) \
-                $(GAME_HEADER_DEFS) $(WIFI_STUBS_O) $(LIBNITRO) $(LIBNNS)
+$(PROGRAM_ELF): $(ENGINE_DS_OBJS) $(ENGINE_CTR_OBJS) $(SHADER_OBJS) $(WIDEART_O) \
+                $(OVERLAY_TABLE_C:.c=.o) $(GAME_HEADER_DEFS) $(WIFI_STUBS_O) $(LIBNITRO) $(LIBNNS)
 	@mkdir -p $(dir $@)
-	$(file >$(OUT)/link.rsp,$(ENGINE_DS_OBJS) $(ENGINE_CTR_OBJS) $(SHADER_OBJS) $(GAME_OBJS) $(WIFI_STUBS_O))
+	$(file >$(OUT)/link.rsp,$(ENGINE_DS_OBJS) $(ENGINE_CTR_OBJS) $(SHADER_OBJS) $(WIDEART_O) $(GAME_OBJS) $(WIFI_STUBS_O))
 	@$(call native_rsp,$(OUT)/link.rsp)
 	@echo "  LINK $@"
 	@$(CC) $(ARM_FLAGS) -specs=3dsx.specs -L$(DEVKITPRO)/libctru/lib \

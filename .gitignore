@@ -10,7 +10,7 @@ build/
 *.nds
 *.sav
 *.log
-*.pica
+
 __pycache__/
 dist/
 data/

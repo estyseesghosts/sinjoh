@@ -1,0 +1,8 @@
+# The copyright screen waits for a press: one at 200, then a second at 230
+# (the first lands before the screen has finished). Hold during the opening,
+# whose layers have pictures, to see the picture's bands and the edge fill.
+every: 10
+200-206 A
+230-236 A
+freeze 270 40
+end: 4000

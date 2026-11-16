@@ -10,6 +10,10 @@
 
 typedef enum kj_program_id { KJ_PROGRAM_NONE, KJ_PROGRAM_2D, KJ_PROGRAM_3D, KJ_PROGRAM_3D_LIT } kj_program_id;
 
+/* The 2D shader's texcoords are in 1/16 of a texel, v counting down from the
+ * top of the texture (the shader's uvscale is 1/(w*16), -1/(h*16)). */
+#define KJ_UV_UNIT 16
+
 bool kj_gpu_init(void);
 void kj_gpu_exit(void);
 /* Forget cached bindings (start of a frame / after a target change). */
@@ -41,6 +45,10 @@ int kj_gpu_uloc_2d_xform(void);
 int kj_gpu_uloc_2d_uvscale(void);
 int kj_gpu_uloc_3d_palette(void);
 int kj_gpu_uloc_3d_texscale(void);
+
+/* The 2D program's texcoord scale for a texture of this size (the shader's
+ * uvscale uniform): texcoords are in 1/16 texel units, v from the top. */
+void kj_gpu_set_2d_uvscale(uint32_t tex_w, uint32_t tex_h);
 
 typedef struct kj_lit_uniforms {
     int direction, direction_low, half, half_low;

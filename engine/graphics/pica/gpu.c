@@ -223,6 +223,16 @@ int kj_gpu_uloc_2d_uvscale(void)
     return s_uloc_uvscale;
 }
 
+void kj_gpu_set_2d_uvscale(uint32_t tex_w, uint32_t tex_h)
+{
+    if (tex_w == 0 || tex_h == 0) {
+        return;
+    }
+    C3D_FVUnifSet(GPU_VERTEX_SHADER, s_uloc_uvscale,
+                  1.0f / ((float)tex_w * (float)KJ_UV_UNIT),
+                  -1.0f / ((float)tex_h * (float)KJ_UV_UNIT), 0.0f, 1.0f);
+}
+
 int kj_gpu_uloc_3d_palette(void)
 {
     return s_program == KJ_PROGRAM_3D_LIT ? s_lit_palette : s_uloc_palette;
