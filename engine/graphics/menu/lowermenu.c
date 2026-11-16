@@ -60,12 +60,17 @@
 #define COL_BORDER RGBA(88, 96, 120)
 #define COL_PANEL RGBA(8, 8, 8)
 #define COL_BTN RGBA(40, 44, 56)
+#define COL_BTN_DIM RGBA(26, 28, 34)
 #define COL_BTN_SEL RGBA(104, 68, 32)
 #define COL_ACCENT RGBA(240, 168, 64)
+#define COL_DIM RGBA(112, 112, 112)
 
 static bool s_enabled = true; /* the remaster layout (menu.txt "off" disables it) */
 static bool s_field_on;        /* the game says the Poketch is the lower screen */
-static int s_selection;
+static int s_selection = -1;
+static uint32_t s_buttons = 0xFFu; /* the buttons the game says can be used */
+static int s_press = -1;           /* a tapped button, until the game takes it */
+static bool s_touch_was;           /* the touch state at the last draw */
 
 /* ------------------------------------------------------------- the font */
 
@@ -214,7 +219,8 @@ static int glyph_index(char ch)
     return p != NULL ? (int)(p - GLYPHS) : 0;
 }
 
-static void push_text(kj_g2d_tile_rect *tiles, int *count, int x, int y, const char *text)
+static void push_text(kj_g2d_tile_rect *tiles, int *count, int x, int y, const char *text,
+                      uint32_t tint)
 {
     for (; *text != '\0'; ++text, x += 8) {
         const int g = glyph_index(*text);
@@ -225,7 +231,7 @@ static void push_text(kj_g2d_tile_rect *tiles, int *count, int x, int y, const c
         if (slot == (uint16_t)0xFFFF) {
             continue;
         }
-        tiles[(*count)++] = (kj_g2d_tile_rect){ x, y, x + 8, y + 8, slot, 0xFFFFFFFFu };
+        tiles[(*count)++] = (kj_g2d_tile_rect){ x, y, x + 8, y + 8, slot, tint };
     }
 }
 
@@ -234,8 +240,11 @@ static void push_text(kj_g2d_tile_rect *tiles, int *count, int x, int y, const c
 bool kj_lowermenu_init(const char *root)
 {
     build_tiles();
-    s_selection = 0;
+    s_selection = -1;
     s_field_on = false;
+    s_buttons = 0xFFu;
+    s_press = -1;
+    s_touch_was = false;
 
     /* The game turns the menu on and off where the DS's lower screen is the
      * field's (the Poketch's bottom-screen handlers); this file only lets a
@@ -270,13 +279,7 @@ void kj_lowermenu_set_active(bool on)
 
 void kj_lowermenu_set_selection(int index)
 {
-    if (index < 0) {
-        index = 0;
-    }
-    if (index >= BTN_COUNT) {
-        index = BTN_COUNT - 1;
-    }
-    s_selection = index;
+    s_selection = (index >= 0 && index < BTN_COUNT) ? index : -1;
 }
 
 int kj_lowermenu_selection(void)
@@ -284,11 +287,57 @@ int kj_lowermenu_selection(void)
     return s_selection;
 }
 
+void kj_lowermenu_set_buttons(uint32_t mask)
+{
+    s_buttons = mask & 0xFFu;
+}
+
+uint32_t kj_lowermenu_buttons(void)
+{
+    return s_buttons;
+}
+
+int kj_lowermenu_take_press(void)
+{
+    const int press = s_press;
+    s_press = -1;
+    return press;
+}
+
+int kj_lowermenu_press_pending(void)
+{
+    return s_press;
+}
+
+/* A tap on a button is the game's input, exactly like a press on the DS's
+ * own menu: queue it on the touch's falling edge and let the game take it.
+ * Touches on the panel are the DS screen's and stay there. */
+static void sample_touch(void)
+{
+    const kj_input *in = kj_ctr_input();
+    const bool down = in != NULL && in->touch;
+    if (down && !s_touch_was && in != NULL) {
+        /* DS touch coordinates (0..255 x 0..191) to the 320x240 layout. */
+        const int x = (int)in->touch_x * 5 / 4;
+        const int y = (int)in->touch_y * 5 / 4;
+        for (int i = 0; i < BTN_COUNT; ++i) {
+            const int y0 = BTN_Y0 + i * BTN_STEP;
+            if (x >= BTN_X && x < BTN_X + BTN_W && y >= y0 && y < y0 + BTN_H) {
+                s_press = i;
+                break;
+            }
+        }
+    }
+    s_touch_was = down;
+}
+
 void kj_lowermenu_draw(const kj_frame_input *in, int engine)
 {
     if (!kj_lowermenu_active()) {
         return;
     }
+
+    sample_touch();
 
     /* Chrome first: one batch of tinted tiles (the white atlas tile times
      * each rectangle's colour). The PICA path is the one the game's own
@@ -305,9 +354,12 @@ void kj_lowermenu_draw(const kj_frame_input *in, int engine)
                                            PANEL_Y + PANEL_H, white, COL_PANEL };
         for (int i = 0; i < BTN_COUNT; ++i) {
             const int y = BTN_Y0 + i * BTN_STEP;
-            chrome[nc++] = (kj_g2d_tile_rect){ BTN_X, y, BTN_X + BTN_W, y + BTN_H, white,
-                                               i == s_selection ? COL_BTN_SEL : COL_BTN };
-            if (i == s_selection) {
+            const bool on = ((s_buttons >> i) & 1u) != 0;
+            chrome[nc++] = (kj_g2d_tile_rect){
+                BTN_X, y, BTN_X + BTN_W, y + BTN_H, white,
+                !on ? COL_BTN_DIM : (i == s_selection ? COL_BTN_SEL : COL_BTN)
+            };
+            if (on && i == s_selection) {
                 chrome[nc++] = (kj_g2d_tile_rect){ BTN_X, y, BTN_X + 3, y + BTN_H, white,
                                                    COL_ACCENT };
             }
@@ -337,15 +389,16 @@ void kj_lowermenu_draw(const kj_frame_input *in, int engine)
     /* Text and icons: one tile batch over everything. */
     kj_g2d_tile_rect tiles[128];
     int nt = 0;
-    push_text(tiles, &nt, 8, 8, "POKEMON PLATINUM");
+    push_text(tiles, &nt, 8, 8, "POKEMON PLATINUM", 0xFFFFFFFFu);
     for (int i = 0; i < BTN_COUNT; ++i) {
         const int y = BTN_Y0 + i * BTN_STEP;
+        const uint32_t tint = ((s_buttons >> i) & 1u) ? 0xFFFFFFFFu : COL_DIM;
         const uint16_t icon = icon_slot(i < BTN_COUNT ? i : 0);
         if (icon != (uint16_t)0xFFFF) {
             tiles[nt++] = (kj_g2d_tile_rect){ BTN_X + 4, y + 6, BTN_X + 12, y + 14, icon,
-                                              0xFFFFFFFFu };
+                                              tint };
         }
-        push_text(tiles, &nt, BTN_X + 16, y + 6, LABELS[i]);
+        push_text(tiles, &nt, BTN_X + 16, y + 6, LABELS[i], tint);
     }
     /* Registered items: a Poké Ball and the bag. */
     const uint16_t reg_a = icon_slot(1), reg_b = icon_slot(2);
