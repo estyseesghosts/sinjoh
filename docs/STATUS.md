@@ -3,6 +3,29 @@
 Verified 2026-11-16, Old 3DS profile in Azahar 2126.2. "Implemented",
 "built", "ran" and "verified" are separate facts; this file keeps them apart.
 
+## 2026-11-16 second pass
+
+- **The missing title gradient was a blend-order bug, not data.** The
+  copyright screen is BG1 (first target, EVA 0 -> 16/16) over BG3 (second
+  target, EVB 16/16): result = BG1*EVA + BG3. Alpha blending is two draws.
+  The blended draw ran first and inverted stencil bit 0 for a layer that is
+  not a second target; the following opaque draw tested bit 0, saw the
+  inverted value and redrew the layer opaquely over the blend. Any
+  full-screen first target with EVA > 0 therefore replaced everything under
+  it, which is why BG3's gradient vanished as BG1 faded in. Swapping the two
+  passes (opaque where bit 0 is clear, then blended where it is set) keeps
+  the same stencil ops correct. Verified against melonDS on the copyright
+  screen at game frames 30 and 120; the top screen now shows BG3 and the
+  25%/94% BG1 fade.
+- The same bug flattened any scene with a full-screen first target, which is
+  the most likely source of the reported washed-out/over-bright field: the
+  picture was replaced by the overlay's colour. No gamma or palette change
+  was made, and none is needed: the 2D palette expands exactly as it did.
+- The 3D wide view is implemented (g3d.c) and reference-exact; still not
+  exercised in an outdoor 3D scene.
+- The start menu is the lower menu (patch 0013, engine API): built and
+  checked visually. Tap routing and every app are not yet exercised.
+
 ## Implemented
 
 - New repository layout: `engine/` (kohjoh's runtime and renderer),
@@ -148,10 +171,9 @@ Verified 2026-11-16, Old 3DS profile in Azahar 2126.2. "Implemented",
 - The measurement covers one interior field scene (the player's room, via the
   real save). The acceptance corpus wants the worst-case outdoor scenes and a
   10-minute run; neither exists yet.
-- The 3D wide camera is unverified in the field. The lower-screen menu draws
-  its buttons but nothing drives the cursor yet, the start menu still draws
-  its own window (patch 0032 in the reference), and the panel apps (map,
-  bag, party, trainer case, save, options, quick access) are absent.
+- The 3D wide camera is unverified in the field. The lower-screen start menu
+  is built and drawn; its tap routing and every app it can open still need a
+  run through, and the panel apps (map, bag, party, trainer case) are absent.
 - The screens pokeplatinum-3ds lays out in parts are not implemented.
 
 ## Next
@@ -162,7 +184,8 @@ Verified 2026-11-16, Old 3DS profile in Azahar 2126.2. "Implemented",
    top screen; the reference's `NitroPort_Gx3dSetWideView(320)`.
 2. The start menu as the lower menu (reference patch 0032): the cursor is
    the lower screen's buttons, its window and icons hidden, its task still
-   opening the apps.
+   opening the apps. Built; exercise a tap on each usable button, the
+   cursor's wrap, and every app's return.
 3. Measure the worst-case scenes (outdoor routes, battle) the same way, then
    a 10-minute steady run. The interior field has ~28 ms of headroom per
    frame, so cost removal there is not justified by data.
