@@ -37,9 +37,9 @@ Verified 2026-11-16, Old 3DS profile in Azahar 2126.2. "Implemented",
     the DS's own lower screen at 15/16 (the Poketch, or the Poké Ball before
     the player has one), a column of eight buttons with icons and names, and
     two registered-item squares. The panel is the 2D interpreter through a
-    view (`kj_screen_draw_view`); the chrome is two batched fill/tile draws;
-    the font and icons are procedural 4bpp DS tiles in the same atlas as the
-    game's layers. No CPU surface, no per-frame texture work.
+    view (`kj_screen_draw_view`); the chrome is one batch of tinted white
+    atlas tiles, the font and icons are procedural 4bpp DS tiles in the same
+    atlas as the game's layers. No CPU surface, no per-frame texture work.
   - `patches/pokeplatinum/0012`: the Poketch's bottom-screen handlers turn
     the menu on in their init and off in their end (pokeplatinum-3ds patch
     0031's hook points), so the title sequence, opening, battles, underground
@@ -83,6 +83,22 @@ Verified 2026-11-16, Old 3DS profile in Azahar 2126.2. "Implemented",
   build's title capture (`t005`, `t010`) shows the copyright screen and the
   DS's ESRB lower screen with no menu chrome, and its log has no
   `field lower screen on` line.
+- The menu's chrome renders (`build/azahar/chrome1`, `chrome_title`): the
+  field capture's panel border is `(88,96,120)` and its buttons `(40,44,56)`
+  at the laid-out pixels, with the selected button `(104,68,32)` and its
+  accent bar `(240,168,64)`; the title capture has zero pixels of the
+  border colour.
+- The chrome is drawn as tinted atlas tiles because the 2D engine's
+  untextured `REPLACE(PRIMARY)` batch draws nothing in Azahar while the
+  textured tile path draws. GDB on the fill batch: `C3D_DrawElements` is
+  called with 102 indices (17 quads), vertices
+  `(0,0)(320,0)(0,240)(320,240)` colour `18,18,24,255`, the 2D arena as
+  vertex buffer (stride 12, 3 attributes, permutation 0x210), TEV stage 0
+  `REPLACE(PRIMARY)`, cull none, full scissor, 320x240 viewport. The batch
+  stays invisible with the TEV constant, with the atlas bound, with alpha
+  test and depth state identical to the working tile batch, with non-zero
+  UVs, and as the last draw of the frame. The menu therefore uses the
+  textured path; `kj_g2d_fill_rects` remains for screen clearing only.
 - `PROFILE=1` field run (`build/azahar/perf1`, 130 s, no freeze so the
   publish loop keeps running; the field and the menu are up from 11.6 s).
   Windows 2-5 are steady field state, 600 publishes each:
@@ -101,7 +117,9 @@ Verified 2026-11-16, Old 3DS profile in Azahar 2126.2. "Implemented",
   time p50 33441 us, p99 34633-34680. Emulated publish interval p50 and max
   2 V-blanks, 0 deadline misses, 0 skipped presents, 0 hitches in every
   steady window. Window 1 covers boot and the opening: max logic 190 ms at
-  frames 2-195, i.e. transitions, not steady state.
+  frames 2-195, i.e. transitions, not steady state. That build's chrome was
+  the untextured fill batch (one draw, 17 quads); the tinted-tile chrome is
+  also one draw and the same quads, so the stage costs stand.
 
 ## Verified facts
 

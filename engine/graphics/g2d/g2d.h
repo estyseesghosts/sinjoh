@@ -38,10 +38,12 @@ void kj_g2d_fill_rects(int screen, const kj_g2d_rect *rects, int count);
 
 /* Atlas tiles at physical-pixel rectangles (nearest), in one pass. The
  * menu's icons and small font are procedural DS tiles, so they take the
- * same atlas path as the game's own layers. */
+ * same atlas path as the game's own layers. `rgba` tints the tile, the same
+ * way a DS BG or OBJ is modulated by its palette. */
 typedef struct kj_g2d_tile_rect {
     int x0, y0, x1, y1;
     uint16_t slot;
+    uint32_t rgba; /* r | g << 8 | b << 16 | a << 24 */
 } kj_g2d_tile_rect;
 void kj_g2d_tiles(int screen, const kj_g2d_tile_rect *rects, int count);
 

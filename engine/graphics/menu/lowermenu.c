@@ -15,10 +15,16 @@
  *
  * Everything is drawn with the same atlas and the same 2D program as the
  * game's layers: the panel is the 2D interpreter through a view, the chrome
- * is batched vertex-coloured quads, and the font and icons are procedural
+ * is one batch of tinted white tiles, and the font and icons are procedural
  * 4bpp DS tiles converted once into atlas slots. No CPU surface, no texture
- * uploads, no per-frame readback: two fill batches, one tile batch and the
- * panel's own layers per frame.
+ * uploads, no per-frame readback: two tile batches and the panel's own
+ * layers per frame.
+ *
+ * The chrome is tinted tiles rather than untextured vertex-coloured quads:
+ * the PICA draws both, but the tile path is the one the game's own layers
+ * exercise on every frame, and it keeps the whole lower screen in one
+ * texture/one TEV mode. Azahar draws the untextured REPLACE(primary) batch
+ * as nothing (build/azahar/fillprobe8); the tinted tile batch draws it.
  */
 
 #include "graphics/menu/lowermenu.h"
@@ -132,6 +138,7 @@ static const uint8_t ICONS[BTN_COUNT][8] = {
 #define GLYPH_COUNT ((int)(sizeof(GLYPHS) - 1))
 static uint8_t s_glyph_tiles[sizeof(GLYPHS) - 1][32];
 static uint8_t s_icon_tiles[BTN_COUNT][32];
+static uint8_t s_white_tile[32];
 static bool s_tiles_built;
 
 /* Index 1 is the glyph's ink; index 0 is transparent (the atlas clears
@@ -165,6 +172,9 @@ static void build_tiles(void)
     for (int i = 0; i < BTN_COUNT; ++i) {
         expand_tile(s_icon_tiles[i], ICONS[i]);
     }
+    for (int i = 0; i < 32; ++i) {
+        s_white_tile[i] = 0x11; /* every pixel is palette entry 1 (white) */
+    }
     s_tiles_built = true;
 }
 
@@ -181,6 +191,17 @@ static uint16_t icon_slot(int i)
     kj_palette_check(&s_pal);
     const kj_tile_ref t =
         kj_atlas_tile(0xF3u, s_icon_tiles[i], (uint32_t)i, false, &s_pal, 0xF202u);
+    return (t.valid && !t.transparent) ? t.slot : (uint16_t)0xFFFF;
+}
+
+/* The chrome is tinted atlas tiles too: a solid white 8x8 tile stretched
+ * by nearest sampling takes the vertex colour, exactly as a DS BG or OBJ
+ * takes its palette's. On the PICA that is one textured draw for the whole
+ * layout, and it is the same path the game's own layers already use. */
+static uint16_t white_slot(void)
+{
+    kj_palette_check(&s_pal);
+    const kj_tile_ref t = kj_atlas_tile(0xF4u, s_white_tile, 0, false, &s_pal, 0xF203u);
     return (t.valid && !t.transparent) ? t.slot : (uint16_t)0xFFFF;
 }
 
@@ -204,7 +225,7 @@ static void push_text(kj_g2d_tile_rect *tiles, int *count, int x, int y, const c
         if (slot == (uint16_t)0xFFFF) {
             continue;
         }
-        tiles[(*count)++] = (kj_g2d_tile_rect){ x, y, x + 8, y + 8, slot };
+        tiles[(*count)++] = (kj_g2d_tile_rect){ x, y, x + 8, y + 8, slot, 0xFFFFFFFFu };
     }
 }
 
@@ -269,30 +290,37 @@ void kj_lowermenu_draw(const kj_frame_input *in, int engine)
         return;
     }
 
-    /* Chrome first: one fill batch. */
-    kj_g2d_rect fills[24];
-    int nf = 0;
-    fills[nf++] = (kj_g2d_rect){ 0, 0, 320, 240, COL_BG };
-    fills[nf++] = (kj_g2d_rect){ 0, 0, 320, 24, COL_HEADER };
-    fills[nf++] = (kj_g2d_rect){ PANEL_X - 2, PANEL_Y - 2, PANEL_X + PANEL_W + 2,
-                                PANEL_Y + PANEL_H + 2, COL_BORDER };
-    fills[nf++] = (kj_g2d_rect){ PANEL_X, PANEL_Y, PANEL_X + PANEL_W, PANEL_Y + PANEL_H,
-                                COL_PANEL };
-    for (int i = 0; i < BTN_COUNT; ++i) {
-        const int y = BTN_Y0 + i * BTN_STEP;
-        fills[nf++] = (kj_g2d_rect){ BTN_X, y, BTN_X + BTN_W, y + BTN_H,
-                                     i == s_selection ? COL_BTN_SEL : COL_BTN };
-        if (i == s_selection) {
-            fills[nf++] = (kj_g2d_rect){ BTN_X, y, BTN_X + 3, y + BTN_H, COL_ACCENT };
+    /* Chrome first: one batch of tinted tiles (the white atlas tile times
+     * each rectangle's colour). The PICA path is the one the game's own
+     * layers use: texture x vertex colour, alpha-tested, one draw. */
+    const uint16_t white = white_slot();
+    kj_g2d_tile_rect chrome[24];
+    int nc = 0;
+    if (white != (uint16_t)0xFFFF) {
+        chrome[nc++] = (kj_g2d_tile_rect){ 0, 0, 320, 240, white, COL_BG };
+        chrome[nc++] = (kj_g2d_tile_rect){ 0, 0, 320, 24, white, COL_HEADER };
+        chrome[nc++] = (kj_g2d_tile_rect){ PANEL_X - 2, PANEL_Y - 2, PANEL_X + PANEL_W + 2,
+                                           PANEL_Y + PANEL_H + 2, white, COL_BORDER };
+        chrome[nc++] = (kj_g2d_tile_rect){ PANEL_X, PANEL_Y, PANEL_X + PANEL_W,
+                                           PANEL_Y + PANEL_H, white, COL_PANEL };
+        for (int i = 0; i < BTN_COUNT; ++i) {
+            const int y = BTN_Y0 + i * BTN_STEP;
+            chrome[nc++] = (kj_g2d_tile_rect){ BTN_X, y, BTN_X + BTN_W, y + BTN_H, white,
+                                               i == s_selection ? COL_BTN_SEL : COL_BTN };
+            if (i == s_selection) {
+                chrome[nc++] = (kj_g2d_tile_rect){ BTN_X, y, BTN_X + 3, y + BTN_H, white,
+                                                   COL_ACCENT };
+            }
         }
+        for (int i = 0; i < 2; ++i) {
+            const int x = BTN_X + i * (ITEM_W + 4);
+            chrome[nc++] = (kj_g2d_tile_rect){ x, ITEM_Y, x + ITEM_W, ITEM_Y + ITEM_W, white,
+                                               COL_BORDER };
+            chrome[nc++] = (kj_g2d_tile_rect){ x + 2, ITEM_Y + 2, x + ITEM_W - 2,
+                                               ITEM_Y + ITEM_W - 2, white, COL_BTN };
+        }
+        kj_g2d_tiles(SCREEN, chrome, nc);
     }
-    for (int i = 0; i < 2; ++i) {
-        const int x = BTN_X + i * (ITEM_W + 4);
-        fills[nf++] = (kj_g2d_rect){ x, ITEM_Y, x + ITEM_W, ITEM_Y + ITEM_W, COL_BORDER };
-        fills[nf++] = (kj_g2d_rect){ x + 2, ITEM_Y + 2, x + ITEM_W - 2, ITEM_Y + ITEM_W - 2,
-                                     COL_BTN };
-    }
-    kj_g2d_fill_rects(SCREEN, fills, nf);
 
     /* The DS's own lower screen (the Poketch in the field) inside the panel,
      * at 15/16 of its size: the same 2D interpreter, a smaller view. */
@@ -314,7 +342,8 @@ void kj_lowermenu_draw(const kj_frame_input *in, int engine)
         const int y = BTN_Y0 + i * BTN_STEP;
         const uint16_t icon = icon_slot(i < BTN_COUNT ? i : 0);
         if (icon != (uint16_t)0xFFFF) {
-            tiles[nt++] = (kj_g2d_tile_rect){ BTN_X + 4, y + 6, BTN_X + 12, y + 14, icon };
+            tiles[nt++] = (kj_g2d_tile_rect){ BTN_X + 4, y + 6, BTN_X + 12, y + 14, icon,
+                                              0xFFFFFFFFu };
         }
         push_text(tiles, &nt, BTN_X + 16, y + 6, LABELS[i]);
     }
@@ -322,11 +351,11 @@ void kj_lowermenu_draw(const kj_frame_input *in, int engine)
     const uint16_t reg_a = icon_slot(1), reg_b = icon_slot(2);
     if (reg_a != (uint16_t)0xFFFF) {
         tiles[nt++] = (kj_g2d_tile_rect){ BTN_X + 9, ITEM_Y + 9, BTN_X + 25, ITEM_Y + 25,
-                                          reg_a };
+                                          reg_a, 0xFFFFFFFFu };
     }
     if (reg_b != (uint16_t)0xFFFF) {
         tiles[nt++] = (kj_g2d_tile_rect){ BTN_X + ITEM_W + 13, ITEM_Y + 9, BTN_X + ITEM_W + 29,
-                                          ITEM_Y + 25, reg_b };
+                                          ITEM_Y + 25, reg_b, 0xFFFFFFFFu };
     }
     kj_g2d_tiles(SCREEN, tiles, nt);
 }

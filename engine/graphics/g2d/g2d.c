@@ -2012,11 +2012,13 @@ void kj_g2d_tiles(int screen, const kj_g2d_tile_rect *rects, int count)
         }
         int16_t u0, v0, u1, v1;
         kj_atlas_slot_uv(r->slot, &u0, &v0, &u1, &v1);
+        const uint8_t cr = r->rgba & 255, cg = (r->rgba >> 8) & 255,
+                      cb = (r->rgba >> 16) & 255, ca = r->rgba >> 24;
         kj_v2d *q = v + n * 4;
-        q[0] = (kj_v2d){ (int16_t)x0, (int16_t)y0, u0, v0, 255, 255, 255, 255 };
-        q[1] = (kj_v2d){ (int16_t)x1, (int16_t)y0, u1, v0, 255, 255, 255, 255 };
-        q[2] = (kj_v2d){ (int16_t)x0, (int16_t)y1, u0, v1, 255, 255, 255, 255 };
-        q[3] = (kj_v2d){ (int16_t)x1, (int16_t)y1, u1, v1, 255, 255, 255, 255 };
+        q[0] = (kj_v2d){ (int16_t)x0, (int16_t)y0, u0, v0, cr, cg, cb, ca };
+        q[1] = (kj_v2d){ (int16_t)x1, (int16_t)y0, u1, v0, cr, cg, cb, ca };
+        q[2] = (kj_v2d){ (int16_t)x0, (int16_t)y1, u0, v1, cr, cg, cb, ca };
+        q[3] = (kj_v2d){ (int16_t)x1, (int16_t)y1, u1, v1, cr, cg, cb, ca };
         ++n;
     }
     if (n == 0) {
