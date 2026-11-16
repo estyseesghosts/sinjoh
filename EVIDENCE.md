@@ -15,13 +15,23 @@
 The distinction matters. `kohjoh`'s Azahar tick counts are excellent for
 comparing two builds of the same code on the same emulator. They are not a
 prediction of `pokeplatinum-3ds` frame time on a New 3DS, and they are not a
-prediction of Old 3DS cycles.
+prediction of Old 3DS cycles. Azahar also charges nothing for PICA vertex
+work, so a change that moves work from the CPU to the GPU always looks free
+there. `[KJ]`, `docs/worklog/2026-11-15-hardware-cuts.md`
+
+**Every `[PP]` number is dated.** They come from `docs/REMASTER.md` and commit
+messages written between 2026-10-14 and 2026-11-12, and upstream merges
+several performance PRs a week. Before any brief below is implemented, its
+cost is re-measured on current `main` (section 6, step 0). A `[PP]` number
+that upstream has since fixed is history, not a merge case; see section 1.2.
 
 ## 1. What the New 3DS pays today
 
-`pokeplatinum-3ds` targets the New 3DS family. The costs below are therefore
-already visible on the hardware the maintainer supports. The Old 3DS is where
-they become fatal, but it is not where they start.
+`pokeplatinum-3ds` is built for the New 3DS. It already boots on an Old 3DS,
+but only with the classic display (`remaster off` is the Old 3DS default;
+`docs/REMASTER.md`, Settings). The costs below are visible on the hardware the
+maintainer tests on. The Old 3DS is where they become fatal, but it is not
+where they start.
 
 ### 1.1 The frame
 
@@ -30,55 +40,62 @@ they become fatal, but it is not where they start.
   interval is 16.7 ms.
 - On a New 3DS, engine A's 2D drawer and the geometry thread share core 2.
   Engine B's drawer runs on core 1's share (or on core 0 when the geometry
-  took core 1); the game and the display thread run on core 0. `[PP]`
+  took core 1); the game, the display thread, and the sound thread run on
+  core 0. `[PP]`, `main_3ds.c` `StartDrawers`, `StartSound`. (`REMASTER.md`
+  still says engine B is on core 0; the code is newer.)
+- On an Old 3DS the port already has a 2-core topology: the geometry on
+  core 1's share, one drawer for both engines on core 0. `[PP]`,
+  `StartDrawers(..., isNew3ds = false)`
 - The geometry thread runs first on core 2 when both are ready. `[PP]`
 - A 2D picture that is handed over is upscaled into the compositor's textures.
   That handover is part of the drawer's measured time. `[PP]`
+- The **GPU is the same on both models**: PICA200 at 268 MHz, 6 MB of VRAM.
+  `[SPEC]`, coffeepot `ctr/hardware/gpu.md`. The New 3DS's extra speed is all
+  CPU (804 MHz, four cores, L2). On the New 3DS the GPU already carries the
+  remaster's defaults: the upper screen drawn 2x2 and scaled down
+  (`smooth3d`), stereo, and 60 FPS presents.
 
-The important consequence: **2D drawer time and geometry time are not separate
-budgets.** They compete for the same core, and the game waits behind both.
+The important consequences: **2D drawer time and geometry time are not
+separate budgets.** They compete for the same core, and the game waits behind
+both. And **GPU time is not free headroom on a New 3DS.** Moving work from
+an 804 MHz CPU to an unchanged 268 MHz GPU can lose, and needs its own gate.
 
 ### 1.2 The 2D change check
 
 The software 2D renderer decides whether an engine's picture changed before it
-redraws it. Since 2026-10-30 it hashes only the VRAM the screen shows, but that
-is still:
+redraws it. It compares the small parts (registers, palettes, OAM) first, and
+hashes VRAM only when they match.
 
-- every map of every enabled BG,
-- the tiles those maps use and their palettes,
-- the OBJ VRAM while an OBJ is shown,
-- the VRAM display's bank.
+**The 864 KB / 15 ms cost is already fixed upstream.** Before 2026-10-30 the
+check read all of engine A's VRAM (864 KB), about 15 ms of every 33 on core 2,
+and because the 3D's texture palettes (bank E) were in it, the upper screen
+was redrawn 5-11 times a second in towns with nothing changed. `[PP]`, commit
+`313ac80`. That commit made the check hash only the VRAM the screen shows:
+each shown BG's map, the tiles it uses and their palettes, the OBJ VRAM while
+an OBJ is shown, and the VRAM display's bank (`EngineShownVramSignature`). The
+next day, `d0dfe9e` stopped window-only H-blank effects (the building-exit band,
+circle fades) from forcing the full read. `[PP]`
 
-For engine A that is **864 KB read and hashed per frame when nothing changed**.
-`[PP]`
+What remains, and must be measured before it is a merge case:
 
-The project's own measurement:
+- the shown-VRAM hash on unchanged frames. Its time is already logged: the
+  `[perf] game` line splits engine A's drawer into checking, drawing, and
+  sprites (`NitroPort_Render2DTimes`). No current number is quoted in
+  `REMASTER.md`;
+- the full read that still happens with a non-window H-blank effect or a
+  bitmap BG;
+- redraws the check cannot avoid because the game really rewrote the bytes
+  (the `[perf] game` line counts redraws by cause:
+  `NitroPort_Render2DChangeStats`).
 
-> "All of it (864 KB for engine A) was read each frame nothing changed, about
-> 15 ms of every 33 on the 3D's core, half of engine A's drawer's time."
-> `[PP]`, `docs/REMASTER.md`
-
-The 15 ms is the unchanged-frame check's share of the drawer's wall time on
-core 2, where it competes with the geometry thread. The 16.2 ms in section 1.3
-is a picture that is actually drawn; the two are different frames, not two
-parts of one budget.
-
-That is roughly a whole 60 Hz present interval spent proving that nothing
-needs to be drawn. In towns, with nothing changed, the upper screen's 2D was
-still drawn again **5-11 times a second** because the check could not prove it
-was unchanged. `[PP]`
-
-The check has escape hatches that make it more expensive, not less:
-
-- an H-blank effect or a bitmap BG forces the full read;
-- a changed palette invalidates every dependent tile;
-- OAM changes are hashed entry by entry in the naive case.
+An earlier draft of this plan quoted the 864 KB / 15 ms as today's cost and
+built its first merge candidate on it. It is not today's cost.
 
 ### 1.3 The 2D drawer
 
 When a picture is drawn, the drawer costs about **16.2 ms**, of which **4.6 ms**
-is handing the picture over to the compositor's textures. `[PP]`, from the
-`[perf] game` line:
+is handing the picture over to the compositor's textures. `[PP]`, from a
+`[perf] game` line logged after the `313ac80` fix:
 
 > `upper 29.9/s (6.0/s new: 4.0 for registers, palettes or sprites, 2.0 for
 > VRAM), 16.2 ms, 4.6 of it handing over (core 2)`
@@ -98,7 +115,9 @@ deadline.
 3D is decoded, transformed, lit, and clipped on the CPU, then submitted as
 screen-space triangles. The project measures:
 
-- **20-30 ms a scene** in the field. `[PP]`
+- **about 20-30 ms a scene** in the field: 18-30, 20-28, 25-29, and
+  23.9 → 20.0 ms in different logs. `[PP]` (The range is ours; no single log
+  says "20-30".)
 - **21-29 ms a scene** while a field effect plays, while engine A's drawer
   simultaneously drops to 8-15 pictures a second at 50-87 ms each. `[PP]`
 - **55-60 ms** for the upper screen's drawer to hand over each picture when
@@ -116,6 +135,21 @@ The current skip logic is conservative and correct, but it is treating a
 symptom. The cost is the CPU transform and lighting of geometry that has not
 changed.
 
+Two parts of the geometry thread already have caches or costs worth knowing
+before designing around them:
+
+- **Lighting already keeps 64 normals' colours**, forgotten together when the
+  vector matrix, the lights, the material, or the polygon's lights change
+  (12% less lighting work). `[PP]`, `REMASTER.md`
+- **60 FPS in-between scenes are built on the CPU from clip-space polygons.**
+  With `fps60` on (the New 3DS default), each scene's polygons are recorded in
+  clip space, matched in order with the previous scene's, and a halfway scene
+  is clipped and culled again (`PolyRecord`, `replay_polygon`). The in-between
+  part costs 3-9 ms a scene (4.7 ms after the latest cut); the `[perf]
+  geometry's work` line splits it out. `[PP]` Any retained-geometry design that
+  falls back to the CPU path whenever interpolation is on is therefore off in
+  the New 3DS's default configuration.
+
 ### 1.5 Audio
 
 The mixer already mixes in blocks (`BLOCK = 128` in `port_sound_chip.c`), so
@@ -125,12 +159,18 @@ What is missing is a **decoded-ADPCM cache**. A looping instrument re-decodes
 the same nibbles every time its decoder state is clean. `kohjoh` measured the
 cost of that decode and the win from caching it (section 2.3).
 
+The sound thread runs on core 0, above the game, beside the display thread
+(`StartSound`). `REMASTER.md` describes core 0 as "nearly full" during the
+lower-screen map work. Mixer time is therefore taken directly from the game.
+There is **no mixer timing in the `[perf]` lines today**, so the N3DS size of
+this cost is unknown until `perf/telemetry` adds one.
+
 ### 1.6 Scheduling
 
 The current topology is sensible for a New 3DS: geometry and engine A's drawer
-on core 2, engine B on core 1's share, game and display on core 0. But the
-priorities and the present-skip
-rules are tuned around the current costs. Once the change check and the
+on core 2, engine B on core 1's share, game, display, and sound on core 0. The
+Old 3DS topology also exists already (section 1.1). But the priorities and the
+present-skip rules are tuned around the current costs. Once the change check and the
 geometry are cheaper, the old pacing rules will be wrong: they can skip a
 present that is now affordable, or starve a drawer that is now the critical
 path. This is why `perf/lowend-schedule` exists, and why it comes after the
@@ -139,9 +179,9 @@ costs are removed rather than before.
 ## 2. What kohjoh measured
 
 `kohjoh` is an HGSS port to the Old 3DS. It solved the same class of problems:
-DS-era software rendering on PICA200 hardware, with a CPU that is slower than
-the New 3DS's and a GPU that is roughly half as fast. Its techniques transfer;
-its game code does not.
+DS-era software rendering on PICA200 hardware, with a CPU about a third as
+fast as an unlocked New 3DS's and the same GPU. Its techniques transfer; its
+game code does not.
 
 ### 2.1 Retained 2D and the tile atlas
 
@@ -179,24 +219,49 @@ reads a matrix index from the packed vertex and does four `dp4`s against
 `palette[64]` (16 matrices x 4 rows). `[KJ]`,
 `src/graphics/pica/shaders/g3d.v.pica`
 
-The display-list cache replays **74% of FIFO words**. On Azahar, the hotpaths
-A/B (display-list cache, state-only replay, compact hot loops) cut game logic
-from **16.648 ms to 15.430 ms (-7.3%)**. `[KJ]`,
+The display-list cache replays **74% of FIFO words** (`[KJ]`,
+`docs/worklog/2026-11-12.md`). On Azahar, the hotpaths A/B (display-list
+cache, state-only replay, compact hot loops) cut game logic p50 from
+**16.648 ms to 15.430 ms (-7.3%)**. `[KJ]`,
 `docs/worklog/2026-11-14-hotpaths.md`. The worklog explicitly warns that the
 replay-rate increase includes state-only streams and must not be presented as a
 retained geometry hit-rate gain.
 
 The lighting shader reproduces the DS's fixed-point lighting semantics in
-PICA vertex code: **409 instructions, 94 float registers including constants**.
+PICA vertex code: **409 instructions, 94 float registers including constants**
+(the lit-plans worklog's count, before the later light-skip flags).
 On held frames it is pixel-exact against the CPU reference: Ho-Oh frames
 2301/2501 match across the complete dual-screen client crop (801x960 screenshot
 pixels), and the Route 34 field matches with zero differing client pixels.
 `[KJ]`, `docs/worklog/2026-11-15-lit-plans.md`
 
-This is the strongest evidence in the whole plan: a DS-exact lighting model is
-achievable on PICA without dropping geometry or accepting visible drift. It
-does not prove the same shader compiles and fits `pokeplatinum-3ds`'s material
-set, which is why `perf/g3d-census` comes first.
+This proves a DS-exact lighting model is achievable on PICA without visible
+drift. It does **not** prove that lighting on the PICA is faster, and
+`kohjoh`'s own hardware run says it often is not:
+
+- Sending every list with a NORMAL down the per-vertex PICA-lit path, static
+  map scenery included, took Old 3DS captured frames in Goldenrod from about
+  **36 ms to 57 ms**. Azahar stayed at 30 FPS throughout, because it does not
+  charge for vertex shader work. `[KJ]`, O3DS log,
+  `docs/worklog/2026-11-15-hardware-cuts.md`
+- The fix (`84d46dc`) **bakes stable lit lists once with exact CPU lighting**
+  and replays them as literal-colour blocks through the unlit shader. Only
+  lists whose lighting key misses on consecutive calls stay PICA-lit. Azahar
+  logic p50 fell from 25.35 to 14.06 ms, with held frames pixel-identical.
+  `[KJ]`
+- The lit shader now skips disabled lights and lights with no specular
+  colour: **101 instructions per one-light vertex instead of 409**
+  (`eeb4b37`). Its flags live in the unused `.w` of float uniforms, because
+  PICA bool uniforms read false in Azahar. The float uniform file is full: the
+  worklog counts "91 float uniforms plus 7 constants of the 96", so there is
+  no room for a separate flags array. `[KJ]`
+- Culling retained blocks wholly outside the clip volume's side planes before
+  copying them (`413d0cc`) cut triangles from 5.02M to 1.94M and draws from
+  80.3k to 61.7k over 600 frames. `[KJ]`
+
+So the transferable lesson is: **retain and cache on the CPU first; light on
+the PICA only what cannot be baked; count GPU work, not Azahar time.** Fitting
+`pokeplatinum-3ds`'s material set is still the census's question.
 
 ### 2.3 Decoded ADPCM
 
@@ -219,9 +284,13 @@ absolute terms, but the decode itself is the same shape of work. `[PP]`/`[KJ]`
 
 `kohjoh` is not a blanket 30 FPS guarantee on Old 3DS:
 
-- Goldenrod logic: about **37 ms** median; active play about **43 ms** median.
-  `[KJ]`, O3DS log.
-- Route 34 is near 30 FPS; Goldenrod is unplayable. `[KJ]`, O3DS log.
+- At its first profiled O3DS run (2026-11-12), Route 34 was near 30 FPS and
+  Goldenrod unplayable; field logic was about 37 ms before the decoder fast
+  paths. `[KJ]`, O3DS log, `docs/worklog/2026-11-12.md`
+- Goldenrod captured frames later measured about 36 ms, then 57 ms after the
+  PICA-lighting change above, before the hardware cuts. `[KJ]`, O3DS log.
+  O3DS ran about 2.3x slower than Azahar for logic and publish. A post-cut
+  O3DS number is not yet in the worklog.
 
 This is exactly why the O3DS tier is a stretch goal with its own gates, not a
 promise inherited from `kohjoh`. A technique that works does not automatically
@@ -231,18 +300,18 @@ produce a playable frame on weaker hardware.
 
 | kohjoh technique | `pokeplatinum-3ds` cost addressed | Expected New 3DS effect | Confidence | First proof |
 | --- | --- | --- | --- | --- |
-| Dirty-generation 2D change check | 864 KB full-VRAM hash, ~15 ms of a 33 ms frame | Returns most of the unchanged-frame drawer time; fewer needless redraws | High | `perf/render2d-change`: differential fuzz + drawer timing |
+| Dirty-generation 2D change check (ours; `kohjoh` compares used tiles instead) | The residual shown-VRAM hash and the H-blank/bitmap full read, size unknown | Unknown until step 0; possibly small after `313ac80` | Low until measured | `perf/render2d-change`: differential fuzz + drawer timing |
 | Retained text-BG layers | Re-rasterizing unchanged BGs every frame | Lower drawer time in towns, menus, battles | High | `perf/g2d-atlas-text`: golden frames + timing |
 | Tile atlas (512-1024) + palette dependencies | Software tile decode and CPU-to-GPU copy | Fewer bytes moved, fewer draws; foundation for all GPU 2D | High for text, medium for affine/extended | `perf/g2d-atlas-text`, `perf/g2d-layers` |
 | Stencil windows + blend/brightness passes | Software windows, blending, brightness, H-blank spans | Full GPU 2D coverage without per-span CPU work | Medium | `perf/g2d-effects`: effect corpus |
-| Retained object-space G3 + 16-entry matrix palette | 20-30 ms CPU transform/clip per scene | Target 8-12 ms geometry per scene `[TARGET]` | Medium-high | `perf/g3d-retained`: replay A/B + timing |
-| PICA vertex lighting | Per-vertex CPU lighting | More geometry time returned; title and battle scenes | Medium | `perf/g3d-lighting`: lit-frame pixel compare |
+| Retained object-space G3 + 16-entry matrix palette + clip-volume cull | 20-30 ms CPU transform/clip per scene, plus 3-9 ms of in-between scenes | Target 8-12 ms geometry per scene `[TARGET]`, only if it also covers `fps60` | Medium | `perf/g3d-retained`: replay A/B + timing + GPU work counts |
+| Baked lighting for stable lists; PICA lighting for the rest | Per-vertex CPU lighting | More geometry time returned without new GPU load for static scenery | Medium | `perf/g3d-lighting`: lit-frame pixel compare + GPU work counts |
 | Decoded-ADPCM cache | Per-sample decode of looping instruments | Lower mixer CPU; core time back to the game | High | `perf/audio-adpcm`: bit-exact output + tick count |
 | Display-list cache / state replay | Repeated G3 decode and submission | Lower logic time in worst-case scenes | Medium | `perf/g3d-fifo` (optional) |
 | Present pacing and priorities | Over-eager skip or drawer starvation | More stable frame times once costs drop | Medium | `perf/lowend-schedule`: p95/p99 histograms |
 
-The matrix is ordered by confidence, not by PR order. PR order is chosen so
-each step makes the next one measurable.
+The matrix follows the 2D, 3D, audio, scheduling grouping, not PR order or
+confidence. PR order is chosen so each step makes the next one measurable.
 
 ## 4. What does not transfer
 
@@ -254,13 +323,20 @@ each step makes the next one measurable.
   calls do not.
 - **Old 3DS cycle numbers.** `kohjoh`'s Azahar ticks are instruction counts on
   an emulator. They rank changes; they do not predict milliseconds.
-- **The assumption that PICA lighting fits every material.** `kohjoh`'s shader
-  is 409 instructions and 94 registers. `pokeplatinum-3ds` has more material
+- **The assumption that PICA lighting fits every material, or is cheaper.**
+  `kohjoh`'s shader is 409 instructions worst case and its float uniform file
+  is full (section 2.2). `pokeplatinum-3ds` has more material
   modes, N3DS-only effects, and a different texture pipeline. The census
-  decides what fits.
-- **60 FPS interpolation, stereo 3D, sun shadows, edge marking, xBRZ, 2x2
-  supersampling, and full WideArt.** These are New 3DS features. They stay on
-  the existing path and are never folded into the shared low-end backend.
+  decides what fits; GPU work counts decide whether it pays.
+- **Azahar as a GPU judge.** It does not charge for vertex work. GPU-side
+  changes are judged by vertices, shader instructions per vertex, triangles,
+  and draws, and on hardware.
+- **Stereo 3D, sun shadows, edge marking, xBRZ, 2x2 supersampling, and full
+  WideArt.** These are New 3DS features. They stay on the existing path and
+  are never folded into the shared low-end backend. 60 FPS interpolation is
+  different: it is on by default on New 3DS, so the shared geometry backend
+  has to support it (section 1.4) or it does not help the default
+  configuration.
 - **A blanket Old 3DS 30 FPS promise.** See section 2.4.
 
 ## 5. Evidence we can produce without the maintainer
@@ -284,14 +360,26 @@ on its own.
   Any disagreement is a failure, not a tolerance.
 - Replay: `gx3d_replay FILE` already exists for captured G3 streams. Use it to
   compare CPU and retained paths on the same input.
+- GPU stand-in: `port_gx3d_gpusim.c` already draws a scene the way
+  `port_gx3d_pica.c` asks the PICA to (same batches, tiled textures, combiner,
+  alpha, blend, and depth rules) on a PC. A retained or lit path that is
+  mirrored there can be compared against the CPU path in the host suite,
+  without hardware. It does not model PICA rasterization exactly, so edge
+  pixels need a stated tolerance; held-frame equality stays a hardware check.
 - Soak: 30+ minute runs with scene transitions, battles, menus, and saves.
 
 ### 5.2 Performance
 
 - `[perf]` logs from our own New 3DS and Old 3DS runs: drawer time, handover
-  time, geometry time, mixer time, skip counts, and tail frame times.
+  time, geometry time, mixer time, skip counts, and tail frame times. The New
+  3DS runs must confirm the 804 MHz speed-up was accepted (the `[perf] New 3DS
+  speed-up` line); a log without it is a compatibility-mode log.
 - Azahar instruction counts for A/B builds on the same scene and input script.
-  These are comparisons, not absolute predictions.
+  These are CPU comparisons, not absolute predictions, and say nothing about
+  GPU cost.
+- GPU work counts for any change that moves work to the PICA: vertices,
+  shader instructions per vertex, triangles, draws, and texture upload bytes
+  per frame.
 - Histograms, not averages: p50, p95, p99, missed V-blanks, and the number of
   scenes left out.
 - A fixed scene corpus and a fixed input script, so before/after numbers are
@@ -303,13 +391,21 @@ on its own.
 - We cannot claim a New 3DS win without a New 3DS log or a deterministic
   counter that the project already trusts.
 - We cannot ask the maintainer to validate performance on hardware they do not
-  target.
+  target. (They do test performance-sensitive work on a New 3DS themselves:
+  `AI_DISCLOSURE.md`. The evidence pack should make that check quick and
+  reproducible, not replace it.)
 - We cannot treat "it looks faster" as a gate.
 
 ## 6. Measurement protocol
 
 Every performance PR uses the same protocol:
 
+0. **Baseline on current `main`.** Before the first PR, and again before each
+   PR is opened, run the corpus on current upstream `main` on a New 3DS (speed-up
+   on), an Old 3DS with `remaster off` (today's O3DS experience), and an Old
+   3DS with `remaster on` (today's O3DS remaster, which is not blocked, only
+   unsupported). These three logs replace every stale `[PP]` number and give
+   the O3DS tier the baseline it currently lacks.
 1. **Scene corpus.** At minimum: title, Twinleaf, Sandgem, Jubilife, Route 202,
    Route 203, Route 206, Eterna, Hearthome, Solaceon, Veilstone, Pastoria, the
    Distortion World, a singles battle, a doubles battle, a contest, the summary
@@ -330,19 +426,33 @@ gate.
 
 ## 7. Gaps and open questions
 
-- **No `pokeplatinum-3ds` Old 3DS baseline exists.** Any O3DS number in these
-  documents is a `[TARGET]` or a `[KJ]` measurement, never a baseline.
-- **The N3DS linear-memory floor is tight.** The remaster reports about 4.0 MB
-  of linear memory left after the title screen and 2.5 MB at its lowest through
-  a run. `[PP]` A 1024x1024 RGBA5551 atlas is 2 MB. Atlas sizing, eviction, and
-  residency are therefore a first-class design constraint, not an
-  afterthought.
-- **VRAM differs by model.** Old 3DS has 6 MiB total; New 3DS has more.
-  `[SPEC]`/`[KJ]` The low-end backend must budget VRAM explicitly and must not
-  rely on New 3DS headroom.
+- **No `pokeplatinum-3ds` Old 3DS baseline has been collected yet.** One is
+  cheap: the port boots on Old 3DS today (step 0 above). Until then, any O3DS
+  number in these documents is a `[TARGET]` or a `[KJ]` measurement.
+- **The N3DS linear-memory floor is tight.** Before the place-name sign's
+  textures (2026-11-04), New 3DS logs had about 4.2 MB (4253 KB) of linear
+  memory left after the title screen and 2.5 MB (2571 KB) at the fewest
+  through a run; after them, 4069 KB. Below `COMPOSE_TEXTURE_ROOM` (now 3 MB)
+  the compositor already takes its smaller display. `[PP]` A 1024x1024
+  RGBA5551 atlas is 2 MB. Atlas sizing, eviction, and residency are a
+  first-class design constraint.
+- **The 64 MB memory mode is a New 3DS case too.** Issue #188: a New 2DS XL
+  launched in the 64 MB mode had about 16.5 MB of linear heap and fell back to
+  the classic display. `[PP]` Memory the shared backends save helps New 3DS
+  users in that mode, which is an N3DS merge case for memory work that does not
+  depend on the O3DS tier.
+- **VRAM is 6 MB on both models.** `[SPEC]`, coffeepot `ctr/hardware/gpu.md`.
+  (An earlier draft said the New 3DS has more; its extra memory is FCRAM, not
+  VRAM.) The backends must budget VRAM explicitly on every model.
+- **Upstream moves fast.** About 200 PRs in a month, nearly all by the owner,
+  who rebases outside work onto `main` themself before a release (PR #219).
+  Long-lived XL branches will rot; small PRs land.
 - **`kohjoh`'s lighting shader may not fit every `pokeplatinum` material.**
   The census is the gate.
 - **Azahar's GPU timing is not representative.** Use it for CPU instruction
   deltas and correctness, not for GPU cost.
-- **The 426 line-ending-only files in `pokeplatinum-3ds` are not work.** Never
-  include them in a PR diff.
+- **Line endings.** The local Windows checkout has `core.autocrlf=true`, so
+  426 text files are CRLF in the working tree and LF in the index. That is a
+  property of this checkout, not of the repository; `git status` is clean.
+  Do not commit from a tool that rewrites them, and check `git diff --stat`
+  for whole-file churn before pushing.

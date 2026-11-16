@@ -7,9 +7,23 @@
 ## 1. Status
 
 The core PR series exists to remove costs that are visible on the New 3DS.
-The Old 3DS tier is what those costs look like when the hardware is slower and
-the memory is tighter. It is assembled last, from backends that already work on
+The Old 3DS tier is what those costs look like when the CPU is slower and the
+memory is tighter. It is assembled last, from backends that already work on
 New 3DS terms.
+
+What exists today, before any of this work:
+
+- The port boots on an Old 3DS. `remaster off` (the classic display: the DS's
+  pictures centred on the 3DS's screens) is the Old 3DS default.
+- An Old 3DS user can write `remaster on` in `remaster.txt`. Nothing blocks
+  it; they get the New 3DS profile (`fps60`, 2x2 `smooth3d`, stereo) on
+  hardware that cannot carry it, with the compositor's memory fallback.
+- The port already has an Old 3DS topology: geometry on core 1's share, one
+  drawer for both engines on core 0, the data-pack cache at 4 MB instead of
+  16. `[PP]`
+
+So the tier is not "make it run on Old 3DS". It is "make the remastered
+display worth turning on there".
 
 The tier is:
 
@@ -55,12 +69,12 @@ The tier deliberately excludes:
 
 | Feature | Why it is out |
 | --- | --- |
-| 60 FPS interpolation | Doubles the present work and the vertex/CPU budget; the first goal is a stable 30. |
-| Stereo 3D | Doubles the 3D render and the framebuffer; not affordable on O3DS at this scale. |
-| Sun shadows | Extra passes and vertex work; a large cost for a subtle effect. |
-| Edge marking | Extra passes and buffers; the DS look survives without it on the small screen. |
-| xBRZ | CPU-heavy upscaling; the GPU 2D path makes it unnecessary for crispness. |
-| 2x2 supersampling | Four times the pixels; the first goal is native resolution. |
+| 60 FPS interpolation (`fps60`) | Doubles the present work and adds 3-9 ms of CPU a scene (more at 268 MHz); the first goal is a stable 30. |
+| Stereo 3D (`stereo`) | Doubles the 3D render and the framebuffer; not affordable on O3DS at this scale. |
+| Sun shadows (`shadows`) | Extra passes and vertex work; parked on the 3DS upstream anyway (they hang its GPU). |
+| Edge marking (`edges`) | Extra passes and buffers; already off by default upstream. |
+| xBRZ (`filter3d xbrz`) | CPU-heavy texture upscaling. |
+| 2x2 supersampling (`smooth3d`, default on) | Four times the pixels on a GPU that is the same on both models but must carry more of the work on O3DS; the first goal is native resolution. |
 | Full WideArt | Memory and bandwidth; the tier may use a reduced wide layout where the scene supports it. |
 | High-resolution 2D textures | The atlas is sized to the memory budget, not to the N3DS's. |
 
@@ -69,26 +83,36 @@ can add one back if it passes its own gate.
 
 ## 4. Hardware budget
 
-Public specifications, not measurements of this port `[SPEC]`:
+Public specifications, not measurements of this port `[SPEC]` (coffeepot
+`ctr/hardware/cpu.md`, `gpu.md`, `memory.md`):
 
 | | Old 3DS | New 3DS |
 | --- | --- | --- |
-| CPU | 2 x ARM11 MPCore, 268 MHz | 4 x ARM11 MPCore, 804 MHz |
-| GPU | PICA200, 133 MHz | PICA200, 268 MHz |
-| System RAM | 128 MB | 256 MB |
-| VRAM | 6 MiB | 10 MiB |
-| Upper screen | 400x240 (800x240 for stereo) | 400x240 (800x240 for stereo) |
-| Lower screen | 320x240 | 320x240 |
+| CPU | 2 x ARM11 MPCore, 268 MHz, no L2 | 4 x ARM11 MPCore, 804 MHz with the speed-up, 2 MB L2 |
+| GPU | PICA200, 268 MHz | the same |
+| FCRAM | 128 MB | 256 MB |
+| Memory for the application | about 64 MB | up to about 124 MB |
+| VRAM | 6 MB | the same |
+| Upper screen | 400x240 (800x240 for stereo) | the same |
+| Lower screen | 320x240 | the same |
 
-The application does not get all of the CPU or all of the RAM. Homebrew
-commonly runs in a 64 MiB memory mode; `pokeplatinum-3ds` already has a
-smaller-display path for that mode. `[PP]` The conservative planning assumption
-for the tier is **64 MiB of application memory and 6 MiB of VRAM**, not the
-full system RAM.
+An earlier draft of this table gave the Old 3DS a 133 MHz GPU and the New 3DS
+10 MB of VRAM. Both were wrong: the GPU and VRAM are identical, so **every
+GPU-side cost measured on a New 3DS is roughly what the Old 3DS pays too**,
+while every CPU-side cost is about three times larger there (more without the
+L2). That makes the tier's arithmetic simpler: move CPU work to cached or
+GPU paths, and do not add GPU work the New 3DS already finds expensive.
+
+The application does not get all of the CPU or all of the RAM. On Old 3DS
+the application gets about 64 MB; `pokeplatinum-3ds` already has a
+smaller-display path for that mode (issue #188, where a New 2DS XL in that
+mode had about 16.5 MB of linear heap). `[PP]` The planning assumption for
+the tier is **about 64 MB of application memory and 6 MB of VRAM**.
 
 Frame budget at 30 FPS: **33.3 ms**. At 268 MHz, that is about 8.9 million
 cycles per core, before the OS and the display thread take their share. `[SPEC]`
-The tier targets two usable cores, not four.
+The application gets core 0 and a share of core 1 (30% in practice on the
+New 3DS, per `main_3ds.c`), not two whole cores.
 
 ## 5. Memory ledger
 
@@ -98,7 +122,8 @@ the tier can ship.
 
 | Item | Planning budget | Source | Gate |
 | --- | --- | --- | --- |
-| Game code, data, and heap | Existing 64 MiB-mode footprint | `[PP]` | Must boot and save |
+| Game code, data, and heap | Existing 64 MB-mode footprint | `[PP]` | Must boot and save |
+| Data-pack cache | 4 MB (already the Old 3DS value) | `[PP]` | No SD stalls on route/town changes |
 | Compositor textures (both screens) | Existing small-display path | `[PP]` | Both screens filled, no black screen |
 | 2D tile atlas | 512 KB at 512x512 RGBA5551; 2 MB at 1024x1024 | `[TARGET]` | Fits with eviction; no fallback storm |
 | 2D layer/vertex buffers | 256-512 KB | `[TARGET]` | Bounded per frame |
@@ -115,10 +140,10 @@ Rules:
 - A failed allocation must never leave a black screen or a half-initialized
   remaster.
 - VRAM is budgeted by bank, not by summing image sizes. Targets, depth, and
-  textures share the 6 MiB.
+  textures share the 6 MB.
 - The atlas and retained geometry are evictable. The tier must survive a full
   atlas and a full geometry cache by falling back, not by crashing.
-- The 64 MiB mode is the floor. Do not let New 3DS headroom hide an O3DS
+- The 64 MB mode is the floor. Do not let New 3DS headroom hide an O3DS
   failure.
 
 ## 6. Scene corpus
@@ -155,7 +180,8 @@ These gates are ours. They are not a request to the maintainer.
 ### G0 - Boot and configuration
 
 - The tier parses from the config and reports its profile in the log.
-- With the tier off, the classic display is unchanged.
+- With the tier off, the classic display is unchanged, and its frame times
+  are no worse than the step 0 baseline.
 - With the tier on, both screens initialize; a forced allocation failure falls
   back cleanly.
 - No crash on a cold boot, a warm boot, or a reboot after a save.
@@ -254,8 +280,11 @@ The tier exits "experimental" only when:
 
 Drop the tier, or leave it downstream, if any of these happen:
 
-- The field p95 stays above 50 ms after PRs 2-10, with no clear path to 40 ms.
-- The memory ledger cannot fit the 64 MiB mode without starving the game.
+- The field p95 stays above 50 ms after PRs 3-10, with no clear path to 40 ms.
+- The tier is not clearly better than today's O3DS `remaster on` and
+  `remaster off` baselines; there is no point shipping a profile that loses
+  to the classic display.
+- The memory ledger cannot fit the 64 MB mode without starving the game.
 - The 2D atlas or retained geometry causes a fallback storm in common scenes.
 - The tier requires disabling saves, audio, or a core gameplay feature.
 - Upstream objects to the profile's presence. The core PRs are independent;
@@ -276,13 +305,18 @@ of the plan. The New 3DS wins are the point.
 
 ## 12. Open risks
 
-- **No baseline.** There is no `pokeplatinum-3ds` Old 3DS baseline. Every
-  number here is a target or a `kohjoh` measurement.
-- **Two cores, not four.** The scheduling work must have a real 2-core mode.
-  Pretending the O3DS has four cores will fail under load.
-- **VRAM is 6 MiB.** The atlas, retained geometry, and 3D textures compete for
-  it. The ledger is a hard constraint.
-- **The GPU is half the clock.** A technique that is comfortable on N3DS may
-  be marginal on O3DS. Measure, do not extrapolate.
+- **No baseline yet.** None has been collected, but one is cheap: run the
+  corpus on an Old 3DS with `remaster off` and with `remaster on` on current
+  `main` (PR_SERIES step 0). Until then every number here is a target or a
+  `kohjoh` measurement.
+- **Core 0 and a share of core 1, not two cores.** The port already has an
+  Old 3DS topology; the scheduling work tunes it for the remaster.
+- **VRAM is 6 MB, on both models.** The atlas, retained geometry, and 3D
+  textures compete for it. The ledger is a hard constraint.
+- **The CPU is a third of the speed; the GPU is the same.** A CPU technique
+  that is comfortable on N3DS may be marginal on O3DS. Moving work to the GPU
+  helps only while the GPU has room, and Azahar will not tell you whether it
+  does (`kohjoh`: 36 → 57 ms on hardware while Azahar held 30 FPS). Measure
+  on hardware, do not extrapolate.
 - **The tier is a support surface.** Even opt-in and experimental, it will
   attract bug reports. The documentation must say what it is and is not.

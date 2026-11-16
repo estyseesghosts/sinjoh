@@ -5,15 +5,24 @@
 
 ## 1. The maintainer's position
 
-Assume the maintainer:
+What the repository shows about the maintainer:
 
-- targets the New 3DS family;
-- does not run benchmarks on request;
+- builds for the New 3DS; the Old 3DS gets the classic display and is not
+  advertised for the remaster;
+- is effectively the only author: about 200 PRs in the last month, all but one
+  their own, merged after their own testing;
+- tests performance-sensitive work on a New 3DS before merging, and every
+  change in Azahar (`AI_DISCLOSURE.md`, `CONTRIBUTING.md`);
+- rebases outside contributions onto `main` themself and folds them into a
+  release (the one outside PR, #219, was handled that way);
 - does not want to own an Old 3DS test lab;
 - will judge a PR by its code, its tests, and its effect on the supported
   hardware;
 - has seen large "port it to weaker hardware" proposals before and is right to
   be wary of them.
+
+So the goal is not to avoid the maintainer's New 3DS check; it is to make
+that check one command, one scene, and one log line to compare.
 
 The plan works with that position, not against it:
 
@@ -24,16 +33,30 @@ The plan works with that position, not against it:
 
 ## 2. Start with one small conversation, not the whole plan
 
-Do not open with an 11-PR roadmap and an Old 3DS tier. Open with the two costs
-the project already documents:
+Do not open with an 11-PR roadmap and an Old 3DS tier. Do not open with the
+864 KB / 15 ms change check either: the maintainer fixed it on 2026-10-30
+(`313ac80`), and quoting it back as an open problem would show we had not
+read the history.
 
-1. the 864 KB / ~15 ms unchanged-frame 2D change check;
-2. the 20-30 ms CPU geometry per scene.
+Open with the step 0 baseline on current `main` and the costs it confirms,
+most likely:
+
+1. the CPU geometry, about 20-30 ms a scene in the field plus the in-between
+   scenes' share, on the core the 2D drawer also needs;
+2. the mixer's share of core 0, where the game runs.
 
 Then say: these are New 3DS costs; I have a sequence of small changes that
-remove them, each with a deterministic test; the first is telemetry, the second
-is the change check. Ask whether that direction is welcome before writing the
-large PRs.
+remove them, each with a deterministic test; the first is a percentile
+summary on top of the existing `[perf]` lines, the second is a bit-exact
+ADPCM cache. Ask whether that direction is welcome before writing the large
+PRs.
+
+Ask two policy questions in the same message, because the answers can end the
+plan early:
+
+- `AI_DISCLOSURE.md` says that "all new features are created by the
+  developer". Are AI-assisted outside PRs welcome at all, and in what form?
+- Is a default-off backend selected by a `remaster.txt` line acceptable?
 
 If the maintainer prefers a different order or a different approach, take it.
 The plan is a proposal, not a contract.
@@ -53,7 +76,12 @@ The plan is a proposal, not a contract.
 - A PR that depends on an unmerged branch is opened as a draft and says so.
 
 Commit messages follow `CONTRIBUTING.md`: imperative summary, blank line, then
-what and why. AI-assisted commits carry `Co-Authored-By: Claude`.
+what and why. AI-assisted commits carry `Co-Authored-By: Claude`, in the form
+upstream's own commits use (`Co-Authored-By: Claude <model> <noreply@anthropic.com>`).
+
+Upstream merges several PRs a day. Keep each branch short-lived, rebase before
+asking for review, and re-run the evidence after a rebase that touches the
+same files.
 
 ## 4. Evidence pack
 
@@ -65,9 +93,13 @@ The PR description carries a short, self-contained evidence section:
   differential or golden-frame comparison.
 - **Performance:** before/after counters from our own hardware, with the scene,
   build, and run count. Label Azahar instruction counts as instruction counts,
-  not milliseconds.
+  not milliseconds. For GPU-side changes, add GPU work counts; Azahar does not
+  charge for vertex work.
+- **How to check it yourself:** the `remaster.txt` line, the scene, and the
+  `[perf]` line to compare, so the maintainer's own New 3DS check takes
+  minutes.
 - **Risks:** what could regress and how the fallback works.
-- **Rollback:** the flag or config key.
+- **Rollback:** the `remaster.txt` line or compile-time switch.
 
 Rules for evidence:
 
@@ -77,12 +109,12 @@ Rules for evidence:
 - Use synthetic fixtures, numeric pixel diffs, and logs. If a visual is
   genuinely needed, describe the scene and let the reviewer reproduce it with
   their own data.
-- Do not ask the maintainer to benchmark. If they choose to test in Azahar,
-  that is a bonus, not a requirement.
+- Do not ask the maintainer to benchmark. They will test in Azahar and, for
+  performance work, on a New 3DS anyway; make that quick.
 - Do not present an emulator instruction count as a hardware frame time.
 - Do not lean on an Old 3DS number to justify a core PR. A core PR's merge
-  case is the New 3DS. PR 10's 2-core mode is an optional sub-feature, not the
-  reason for the PR.
+  case is the New 3DS. PR 10's Old 3DS tuning is an optional sub-feature, not
+  the reason for the PR.
 
 ## 5. CI and tests
 
@@ -127,6 +159,12 @@ A short disclosure paragraph in the PR is enough:
 Do not over-explain or apologize for AI assistance. The project already has a
 policy; follow it.
 
+One line of that policy needs an answer before any code: under "What the AI
+is not used for" it says "all new features are created by the developer". A
+performance backend is arguably a feature. Ask in the opening issue (section
+2) rather than guess; if the answer is no, the plan becomes a design write-up
+the maintainer can implement, or a downstream branch.
+
 ## 7. GPL provenance
 
 `pokeplatinum-3ds` and `kohjoh` are both GPL-3.0. Adapting a technique or a
@@ -153,22 +191,24 @@ copyright problem; a copied file without attribution is.
 
 ### Before the first PR
 
-- Open one short issue or discussion with the two costs and the proposed first
-  two steps. Do not paste the whole plan.
-- Ask for the maintainer's preferred direction. If they want the change check
-  first and telemetry later, reorder.
-- Confirm that a config-gated, default-off backend is acceptable.
+- Collect the step 0 baseline on current `main` first.
+- Open one short issue or discussion with the measured costs and the proposed
+  first two steps. Do not paste the whole plan.
+- Ask for the maintainer's preferred direction. If they want a different
+  order, reorder.
+- Ask the two policy questions in section 2.
 
 ### The first two PRs
 
-- `perf/telemetry`: small, no behavior change, easy to review. It establishes
-  the measurement vocabulary.
-- `perf/render2d-change`: the clearest New 3DS win, the lowest-risk proof that
-  the approach works. It should be the first merge candidate.
+- `perf/telemetry`: small, no behavior change, easy to review. It adds
+  percentiles and mixer timing to the existing `[perf]` vocabulary rather
+  than inventing a new one.
+- `perf/audio-adpcm`: bit-exact, renderer-independent, testable on a PC, on
+  the game's core. It should be the first merge candidate.
 
-Do not open the XL renderer PRs until these two are understood. If the
-maintainer rejects the change-check approach, the rest of the plan needs
-rethinking, and it is better to know early.
+Do not open the XL renderer PRs until these two are understood, and do not
+open `perf/render2d-change` at all unless the baseline shows the residual
+check matters.
 
 ### The XL PRs
 
@@ -195,6 +235,12 @@ rethinking, and it is better to know early.
 - **"The numbers are from an emulator."** Correct. They are instruction-count
   comparisons, not frame-time claims. The hardware claims come from our own
   logs and are labelled.
+- **"The GPU is already busy on New 3DS."** Agree; that is why GPU-side PRs
+  report GPU work counts, bake on the CPU where possible, and gate on the
+  `[perf] display` rate with `smooth3d` and stereo at their defaults.
+- **"This breaks 60 FPS / sun shadows."** The retained path must support
+  `fps60` (its merge case depends on it) and leaves sun shadows on the
+  existing path.
 
 ## 9. PR description template
 
@@ -223,15 +269,19 @@ No Old 3DS claims in a core PR.>
 ## Performance
 
 Scene: <name>
-Build: <commit>
-Hardware: <New 3DS model, or Azahar instruction count>
+Build: <commit> (rebased on main <commit>)
+Hardware: <New 3DS model, speed-up on; or Azahar instruction count>
 Before: <counter>
 After: <counter>
 Runs: <n>
+GPU work (if the change moves work to the GPU): <vertices, instr/vertex, triangles, draws>
+
+To check on your New 3DS: `<remaster.txt line>`, <scene>, compare the
+`[perf] <...>` line.
 
 ## Risks and rollback
 
-<What can regress. The flag or config key that restores the old path.>
+<What can regress. The `remaster.txt` line that restores the old path.>
 
 ## AI assistance
 
@@ -256,6 +306,8 @@ state "No third-party code.">
   backend.
 - Do not present `kohjoh`'s Azahar ticks as `pokeplatinum` frame times.
 - Do not copy a `kohjoh` file wholesale and call it an adaptation.
-- Do not let the diff include the repository's line-ending-only files.
+- Do not let the diff include whole-file line-ending churn.
+- Do not quote a `REMASTER.md` cost as current without checking the commits
+  after it.
 - Do not argue about support policy. Restate the New 3DS merge case and let the
   code speak.

@@ -28,25 +28,39 @@ Common rules for every PR:
 4. The old path remains selectable, at least for one release cycle.
 5. No game content, no captured assets, no save files, no built ROMs.
 6. AI assistance is disclosed in the commit and the PR description.
-7. `make test` and `make game` are green before review.
-8. The PR includes its own before/after evidence; the maintainer is not asked
-   to benchmark hardware.
-9. Never include the 426 line-ending-only files in the diff.
+7. `make test`, the host32 suites, and `make game` are green before review,
+   and the branch has been run in Azahar (`CONTRIBUTING.md`: `main` always
+   holds a version tested in Azahar).
+8. The PR includes its own before/after evidence, measured against current
+   `main` (step 0). The maintainer is not asked to benchmark; their own New
+   3DS check (`AI_DISCLOSURE.md`) should be one command and one scene.
+9. No whole-file line-ending churn in the diff (EVIDENCE section 7).
+10. Switches are `remaster.txt` lines (`name value`, parsed in
+    `ReadRemasterConfig`) or compile-time defines. The 3DS build reads no
+    environment variables.
+11. A PR that moves work to the GPU reports GPU work counts (vertices, shader
+    instructions per vertex, triangles, draws, upload bytes) as well as CPU
+    time. The GPU is the same 268 MHz PICA200 on both models and already
+    carries the New 3DS remaster's supersampling, stereo, and 60 FPS presents;
+    Azahar does not charge for vertex work.
+12. Every switch is checked in both the remaster and the classic display, and
+    with `fps60` on and off.
 
 ## Order and dependencies
 
 ```
+step 0: baseline on current main (not a PR)
 perf/telemetry
-  ├─ perf/render2d-change
-  │    └─ perf/g2d-atlas-text
-  │         └─ perf/g2d-layers
-  │              └─ perf/g2d-effects
   ├─ perf/audio-adpcm
+  ├─ perf/render2d-change        (only if step 0 shows a residual cost)
+  ├─ perf/g2d-atlas-text
+  │    └─ perf/g2d-layers
+  │         └─ perf/g2d-effects
   └─ perf/g3d-census
        └─ perf/g3d-retained
             └─ perf/g3d-lighting
 
-the core backends (2-6, 8-9)
+the core backends (3-6, 8-9; 2 if it went ahead)
   └─ perf/lowend-schedule
        └─ perf/o3ds-tier
 
@@ -57,9 +71,13 @@ optional, after the core track:
 
 The order is chosen so each step makes the next one measurable:
 
+- a baseline on current `main` before any claim, because the `[PP]` numbers
+  are weeks old and upstream has already removed the largest one (the 864 KB
+  change check, `313ac80`);
 - telemetry before any timing claim;
-- the change check before GPU 2D, because it is the clearest N3DS win and the
-  lowest-risk proof that the approach works;
+- the ADPCM cache as the first merge candidate: bit-exact, independent of the
+  renderer, small, and on core 0 where the game runs;
+- the change check only if the baseline shows it still matters;
 - the census before retained geometry, because it decides whether the
   technique fits `pokeplatinum`'s G3 stream;
 - scheduling after the costs are removed, because the old pacing rules are
@@ -70,6 +88,38 @@ The order is chosen so each step makes the next one measurable:
 A PR may be opened as a draft while its dependency is unmerged. It is not
 rebased into a long private stack; each PR is based on `main` plus its
 dependency branch, and the dependency is called out in the description.
+Upstream merges several PRs a day, so a branch older than a week is rebased
+and re-measured before review.
+
+---
+
+## 0. Baseline - not a PR
+
+**Why:** the plan's costs come from `REMASTER.md` and commit messages dated
+2026-10-14 to 2026-11-12. One of them, the 864 KB / ~15 ms change check, was
+fixed before this plan was written. Nothing below is implemented until its
+cost is measured on current `main`.
+
+**What:**
+
+- Build current upstream `main`. Run the corpus (EVIDENCE section 6) on:
+  - a New 3DS with the 804 MHz speed-up confirmed in the log;
+  - an Old 3DS with `remaster off` (the default there);
+  - an Old 3DS with `remaster on` (allowed today, unsupported).
+- Record, per scene: the `[perf] game` line (engine A's checking, drawing,
+  and sprites times, and why each drawer redrew), the `[perf] geometry` and
+  `geometry's work` lines (including the in-between scenes' part), the
+  `[perf] 3D` and `[perf] display` lines, `[stall]` lines, and the memory log.
+- Write the result as a short table in this repository. It replaces the
+  `[PP]` numbers in every brief's merge case.
+
+**Decision points it feeds:**
+
+- PR 2 goes ahead only if unchanged-frame checking time, or H-blank/bitmap
+  full reads, are a visible share of engine A's drawer in the corpus.
+- PR 3's priority depends on the mixer's share of core 0 (which needs PR 1's
+  mixer timing; a rough first number can come from a local build).
+- The O3DS `remaster on` run is the tier's real starting point.
 
 ---
 
@@ -78,20 +128,23 @@ dependency branch, and the dependency is called out in the description.
 **Merge case (N3DS):** every later claim about frame time becomes checkable
 from a log, instead of an argument.
 
-**Cost removed:** blind spots. Today the project has excellent `[perf]` lines
-for the drawer, the geometry, and the mixer, but they are averages and
-per-event counters. They do not say p95/p99, and they do not split the change
-check from the draw from the handover consistently across scenes.
+**Cost removed:** blind spots. The project already logs a great deal: the
+`[perf] game` line (frame rate, ms a frame, waiting for drawing, engine A's
+checking/drawing/sprites split, redraws by cause), `[perf] geometry` and
+`geometry's work` (including the in-between scenes' share), `[perf] 3D`,
+`[perf] display`, and `[stall]` lines for frames over 34 ms. What is missing:
+percentiles (everything is a per-second average), the mixer (no timing at
+all), engine B's split, and a per-scene summary that two builds can diff.
 
 **Scope**
 
-- In: a small histogram module with fixed buckets, scene markers, and stable
-  log lines.
-- In: per-stage counters for 2D (change check, draw, handover), 3D (decode,
-  transform, light, clip, submit), audio (decode, mix), and presentation
-  (shown, kept, skipped, late).
+- In: a small histogram module with fixed buckets, fed by the timers the
+  existing lines already take.
+- In: mixer timing (decode and mix) on the sound thread.
 - In: a one-line summary per scene: p50/p95/p99 frame time, drawer time,
-  geometry time, missed V-blanks, scenes left out.
+  geometry time, mixer time, missed V-blanks, scenes left out.
+- Out: renaming or reformatting the existing `[perf]` lines; people and
+  scripts read them.
 - Out: any change to rendering, scheduling, or defaults.
 - Out: a telemetry upload or any network access.
 
@@ -115,10 +168,11 @@ check from the draw from the handover consistently across scenes.
   scene end. No locks in hot paths.
 - Scene boundaries come from the existing place-name/scene markers, so a log
   can be sliced without a new game hook.
-- The summary is emitted once per scene or once per second, buffered, and
-  written off the critical path.
-- Enabled by a config key (for example `perf 1`) or a compile-time switch.
-  Disabled means no measurable cost, not "cheap enough".
+- The summary goes through the existing log thread (lowest priority; a
+  `[perf]` line written on the logging thread once held the game 35 ms every
+  two seconds, per `REMASTER.md`).
+- Enabled by a `remaster.txt` line (for example `perf on`) or a compile-time
+  switch. Disabled means no measurable cost, not "cheap enough".
 
 **Flags and defaults**
 
@@ -154,25 +208,37 @@ check from the draw from the handover consistently across scenes.
 
 ---
 
-## 2. `perf/render2d-change` - stop hashing 864 KB to learn nothing changed
+## 2. `perf/render2d-change` - replace the residual VRAM hash (conditional)
 
-**Merge case (N3DS):** the project's own documentation puts the unchanged-frame
-VRAM read at about 15 ms of a 33 ms frame, half of engine A's drawer's time.
-Removing it is the largest single New 3DS win in the plan, and it is invisible
-to the player when it is correct.
+**Status:** conditional on step 0. Upstream already removed the large version
+of this cost: before `313ac80` (2026-10-30) the check read all 864 KB of engine
+A's VRAM, about 15 ms of every 33; it now hashes only the VRAM the screen
+shows, and `d0dfe9e` stopped window-only H-blank effects from forcing the full
+read. If the baseline shows the remaining check is a small share of the
+drawer, drop this PR. It is the riskiest small PR in the series (a missed
+write is a stale screen), so it needs a real number to justify it.
 
-**Cost removed:** `EngineShownVramSignature` reads and hashes up to 864 KB of
-shown VRAM for engine A every frame, even when nothing changed. Related costs:
-the OAM entry-by-entry hash, the palette invalidation sweep, and the forced
-full read for H-blank effects and bitmap BGs.
+**Merge case (N3DS):** to be filled from step 0: engine A's unchanged-frame
+checking time (the `[perf] game` line already reports it), and how often a
+non-window H-blank effect or a bitmap BG forces the full read.
+
+**Cost removed:** `EngineShownVramSignature` hashes every shown BG's map,
+tiles, and palettes, and the OBJ VRAM while an OBJ is shown, on every frame
+whose small parts are unchanged. Related costs: the forced full read for
+non-window H-blank effects and bitmap BGs.
 
 **Scope**
 
 - In: a generation-based change check for the common case: text/affine BGs,
   OBJ tiles, palettes, maps, and the VRAM display bank.
 - In: write hooks on every CPU-visible VRAM path the port controls, including
-  the SDK's GX load routines (reached through the port's NitroSDK patches),
-  DMA, and direct CPU stores.
+  the SDK's GX load routines (reached through the port's NitroSDK patches)
+  and DMA.
+- In, first: a census of the write paths. VRAM is plain arrays
+  (`NitroPort_BgVram` and friends), so a direct pointer store from game code
+  cannot be hooked without changing the game. If the census finds direct
+  stores into shown VRAM in common scenes, this design does not work and the
+  PR stops there.
 - In: a conservative fallback to the existing hash when a frame uses a path
   that cannot be tracked, or when the game changes bank mapping or display
   mode in a way the generation vector cannot describe.
@@ -219,7 +285,7 @@ full read for H-blank effects and bitmap BGs.
   - Bank remap or mode change that aliases regions: invalidate broadly.
   - A write path with no hook: set an "unknown write" flag, redraw this frame,
     and hash to confirm the next one.
-- Debug verify mode: once per second, or on a config key, compute both the
+- Debug verify mode: once per second, or on a `remaster.txt` line, compute both the
   generation result and the full hash. A mismatch logs the region and the
   frame, and forces a redraw. This is how the hook coverage is proven on
   hardware without asking the maintainer to test it.
@@ -227,8 +293,8 @@ full read for H-blank effects and bitmap BGs.
 **Flags and defaults**
 
 - Default on only after the fuzz and hardware verification pass; until then,
-  a config key selects it.
-- `NITRO_PORT_2D_SCAN=hash` (or the config equivalent) restores the old path.
+  a `remaster.txt` line selects it.
+- A `remaster.txt` line (for example `scan2d hash`) restores the old path.
 - The fallback is per-frame and automatic; a scene that uses an untracked
   effect does not lose correctness.
 
@@ -240,17 +306,18 @@ full read for H-blank effects and bitmap BGs.
 - A test that writes the same value to a region and confirms the generation
   still changes (conservative, not a correctness bug).
 - A test that a read-only frame reports unchanged.
-- `test_render` plus a new `test_render_change` suite, run under `host` and
-  `host32`.
+- `test_render` (including the existing `test_window_rows` check that VRAM the
+  picture does not show is not read) plus a new change-check suite, run under
+  `host` and `host32`.
 - Golden-frame comparison on the scene corpus: the fast path and the hash path
   must produce identical client pixels.
 
 **Performance gate**
 
-- Unchanged-frame change-check time drops from about 15 ms to under 1 ms on
-  New 3DS `[TARGET]`.
-- Engine A's drawer p95 improves in towns and menus, where the check is the
-  dominant cost.
+- Unchanged-frame checking time drops to under 1 ms on New 3DS `[TARGET]`,
+  from whatever step 0 measured.
+- Engine A's drawer p95 improves in the scenes where step 0 found the check
+  to matter.
 - No increase in missed redraws: the verify mode reports zero mismatches over
   a 30-minute run.
 - No regression in changed-frame time.
@@ -265,16 +332,20 @@ full read for H-blank effects and bitmap BGs.
   scenes. Mitigation: the region count is fixed and small; measure both.
 - Rollback: flip the default to the hash path; the code remains.
 
-**Size and dependencies:** M. Depends on 1 for measurement.
+**Size and dependencies:** M. Depends on 1 for measurement and on step 0 for
+the go/no-go.
 
 ---
 
 ## 3. `perf/audio-adpcm` - stop re-decoding looping instruments
 
-**Merge case (N3DS):** the mixer's decode work is real CPU time on the same
-core as the game. `kohjoh` halved its mixer instruction count with a
-decoded-ADPCM cache; the same shape of work exists here, and the output can be
-bit-exact.
+**Merge case (N3DS):** the sound thread runs on core 0, above the game and
+beside the display thread (`StartSound`), and `REMASTER.md` already describes
+core 0 as nearly full. Every mixer tick is taken from the game. `kohjoh`
+halved its mixer instruction count with a decoded-ADPCM cache; the same shape
+of work exists here, and the output can be bit-exact. This is the first merge
+candidate: small, independent of the renderer, and testable bit for bit on a
+PC.
 
 **Cost removed:** per-sample ADPCM decode of voices whose decoder state is
 clean, especially looping instruments. `port_sound_chip.c` already tracks
@@ -299,7 +370,7 @@ samples.
   per-sample loop.
 - `3ds_port/nitro/include/nitro_port_sound_chip.h`: the voice state, if the
   cache lives per voice.
-- `3ds_port/nitro/tests/test_sound_chip.c` and
+- `3ds_port/nitro/tests/test_sound_chip.c`, `test_sound_sequence.c`, and
   `tests/sound_chip_reference.c`: the differential reference.
 
 **Design**
@@ -324,7 +395,7 @@ samples.
 **Flags and defaults**
 
 - Default on after bit-exact differential tests pass.
-- A config key or compile-time switch disables it for A/B.
+- A `remaster.txt` line or compile-time switch disables it for A/B.
 - No change to the audio output when the cache is off.
 
 **Correctness tests**
@@ -363,11 +434,13 @@ renderer track.
 ## 4. `perf/g2d-atlas-text` - draw text BGs from a tile atlas
 
 **Merge case (N3DS):** the software 2D drawer costs about 16.2 ms a picture,
-4.6 ms of it handover. Towns and menus redraw more often than they need to
-because the change check cannot prove they are static. A GPU text-BG path
-removes the per-tile CPU rasterization for the most common BG type, and in
-scenes whose picture is text BGs alone it removes the full-picture handover
-too.
+4.6 ms of it handover (a log after the `313ac80` fix; re-measure in step 0).
+It shares core 2 with the geometry, so every drawn picture delays a scene. A
+GPU text-BG path removes the per-tile CPU rasterization for the most common
+BG type, and in scenes whose picture is text BGs alone it removes the
+full-picture handover too. The GPU cost is a few hundred quads a layer and
+dirty-tile uploads; rule 11's counts must show it is small next to what the
+remaster already draws.
 
 **Cost removed:** software rasterization of text BGs; and, for scenes whose
 picture is text BGs alone, the CPU-to-GPU copy of the resulting picture.
@@ -379,6 +452,11 @@ picture is text BGs alone, the CPU-to-GPU copy of the resulting picture.
 - In: tile cache identity by VRAM generation, tile number, palette, bpp, and
   mapping; palette dependencies; dirty-tile upload.
 - In: scroll, wrap, priority, and the existing compositor ordering.
+- In: every 2D `filter` mode the remaster offers (`sharp`, the default: each
+  DS pixel 2x2 then bilinear; `nearest`; `smooth`; `scale2x`), the wide layout,
+  and the taller canvas (`NitroRender2DSplit.top`). The software path upscales
+  at handover (`ShowScreen`); the atlas path must produce the same screen
+  pixels after its own filtering, or the mode stays on the software path.
 - Out: affine BGs, extended BGs, sprites, windows, blending, brightness, and
   H-blank spans. Those are PRs 5 and 6, or stay on the software path.
 - Out: bitmap BGs (fallback).
@@ -415,19 +493,33 @@ picture is text BGs alone, the CPU-to-GPU copy of the resulting picture.
   nearest filtering) so a bilinear tap cannot pull in a neighboring tile.
 - Start with a 512x512 atlas (512 KB RGBA5551) to fit the New 3DS linear-memory
   floor; grow to 1024x1024 only if the memory log and the atlas stats show
-  room. `kohjoh` uses 1024x1024, but `pokeplatinum-3ds` reports about 4.0 MB of
-  linear memory left after the title screen and 2.5 MB at its lowest. `[PP]`
+  room. `kohjoh` uses 1024x1024, but `pokeplatinum-3ds` has logged about
+  4.2 MB of linear memory left after the title screen and 2.5 MB at its
+  lowest, and switches to its smaller display below `COMPOSE_TEXTURE_ROOM`
+  (3 MB). `[PP]` The atlas must not push a New 3DS into the smaller display.
   Atlas size is a measured decision, not a copied constant.
+- Upstream's sprite atlas stores each DS pixel as 2x2 texels so the `sharp`
+  filter comes out of plain bilinear sampling. For a BG atlas that
+  quadruples the memory; prefer a texel per DS pixel with the `sharp` look
+  reproduced in sampling, and measure both.
 - If the atlas is full, evict the least recently used page or fall back to the
   software path for that BG. A fallback is logged once per scene, not per
   frame.
-- The existing `gpuBgs` path already draws some BGs; this PR extends it rather
-  than creating a parallel renderer.
+- Two GPU 2D paths already exist and are the starting point:
+  `NitroRender2DSplit.gpuBgs` (a caller's bitmask; the compositor draws a
+  repeating weather BG from a picture of its whole map, scrolled on the GPU:
+  `GpuBgOf`, `NitroPort_RepeatingBgs`) and `gpuObjs` (sprites drawn from a
+  256x128-pixel sprite atlas stored as a 512x256 texture,
+  `NITRO_GPU_OBJ_ATLAS_*`). These are per-frame
+  decisions, not user-facing levels. This PR adds a third, cell-quad path
+  beside them, sharing their split/order plumbing rather than creating a
+  parallel renderer.
 
 **Flags and defaults**
 
-- `gpuText` (or the existing `gpuBgs` level) selects the path.
+- A `remaster.txt` line (for example `gpu2d text`) selects the path.
 - Default off until golden frames pass; then default on for text BGs only.
+- The classic display (`remaster off`) is untouched.
 - Per-BG fallback: a BG that uses an unsupported mode stays in the software
   picture, and the compositor draws it in the right order.
 
@@ -440,7 +532,8 @@ picture is text BGs alone, the CPU-to-GPU copy of the resulting picture.
 - Tile change: one tile changes; the frame matches.
 - Scroll and wrap: a full 256-pixel scroll and a map-edge wrap; no seams.
 - Atlas eviction: force a full atlas and verify the fallback still matches.
-- `test_render` under `host` and `host32`.
+- Each `filter` mode, wide and narrow layout.
+- `test_render` and `test_upscale` under `host` and `host32`.
 
 **Performance gate**
 
@@ -459,10 +552,12 @@ picture is text BGs alone, the CPU-to-GPU copy of the resulting picture.
   evict, fall back, and measure.
 - Risk: the compositor's ordering changes. Mitigation: draw through the
   existing split/order, not a new pass.
-- Rollback: set `gpuText` off; the software path is unchanged.
+- Rollback: set the `remaster.txt` line off; the software path is unchanged.
 
-**Size and dependencies:** L. Depends on 2 (the change check must be cheap
-enough that the drawer is worth optimizing) and 1.
+**Size and dependencies:** L. Depends on 1. Independent of 2: with GPU text
+BGs, an unchanged layer is simply not re-rasterized, which is what `kohjoh`
+does (it compares the tiles and palette a layer used, with no write
+tracking).
 
 ---
 
@@ -484,7 +579,11 @@ after this PR.
 - In: extended BGs (256-color/8bpp modes) with exact palette decode.
 - In: sprites: priority, affine, mosaic, flip, double-size, disabled, and
   per-OBJ palette.
-- In: the existing `gpuObjs` path extended, not replaced.
+- In: the existing `gpuObjs` path extended, not replaced. Today it takes only
+  normal sprites in front of everything (no affine, semi-transparent, window,
+  or bitmap sprites; no mosaic; no colour effect; no H-blank effect); this PR
+  lifts those limits one at a time, with the existing sprite atlas or the PR 4
+  atlas, whichever the memory log favours.
 - Out: per-line affine changes (fallback to software or PR 6 spans).
 - Out: bitmap BGs and OBJ windows (fallback).
 - Out: windows, blending, brightness (PR 6).
@@ -520,8 +619,8 @@ after this PR.
 
 **Flags and defaults**
 
-- Extend the existing `gpuBgs`/`gpuObjs` levels rather than adding a second
-  switch.
+- Extend PR 4's `remaster.txt` line (for example `gpu2d layers`) rather than
+  adding a second switch.
 - Default off until the battle and Distortion World golden frames pass.
 - Per-BG and per-OBJ fallback remains.
 
@@ -547,9 +646,10 @@ after this PR.
   reference's fixed-point math, and compare pixels, not just geometry.
 - Risk: sprite ordering regresses. Mitigation: reuse the existing compositor
   order and add an overlap test.
-- Rollback: lower the `gpuBgs`/`gpuObjs` level; the software path remains.
+- Rollback: lower the `gpu2d` level; the software path remains.
 
-**Size and dependencies:** XL. Depends on 4.
+**Size and dependencies:** XL. Depends on 4. Split on opening: sprites and
+affine/extended BGs are separate costs and separate PRs.
 
 ---
 
@@ -578,8 +678,11 @@ passes, and per-span rasterization for the remaining 2D effects.
 **Integration points**
 
 - `3ds_port/nitro/src/port_render2d.c`: the span machinery (`LinesSpans`,
-  `split->spanLo`/`spanHi`, per-line registers), the window/blend/brightness
-  decisions, and `DrawEngine`.
+  per-line registers), the window/blend/brightness decisions, and
+  `DrawEngine`. The spans' consumers (`spanLo`/`spanHi`) are in
+  `main_3ds.c` and `port_compose_pica.c`.
+- The compositor's existing band and circle drawing (`gpuCircleOn`, the
+  building exit's band): window effects it already draws on the GPU.
 - `3ds_port/game/app/port_compose_pica.c`: the compositor's passes, stencil
   state, and target textures.
 - The atlas module from PR 4 and the layer path from PR 5.
@@ -605,8 +708,9 @@ passes, and per-span rasterization for the remaining 2D effects.
 
 **Flags and defaults**
 
-- A `gpuEffects` level (or the existing `gpuBgs` level) selects windows,
-  blending, and brightness independently, so a regression can be narrowed.
+- A `remaster.txt` line (for example `gpu2d effects`, or one line per effect)
+  selects windows, blending, and brightness independently, so a regression
+  can be narrowed.
 - Default off until the effect corpus passes.
 - H-blank spans default to the software fallback until their own timing gate
   passes; the rest of the effect path can ship without them.
@@ -640,7 +744,7 @@ passes, and per-span rasterization for the remaining 2D effects.
   a two-engine test.
 - Risk: H-blank spans are slower than software. Mitigation: they are a
   separately gated sub-feature; keep the fallback.
-- Rollback: lower the `gpuEffects` level; the software path remains.
+- Rollback: lower the `gpu2d` level; the software path remains.
 
 **Size and dependencies:** XL. Depends on 5.
 
@@ -685,6 +789,14 @@ deterministic, and de-risks the largest PR in the series.
 - Record the maximum live vertices, the number of matrix changes per list, the
   texture binds per list, and the modes used. These decide the matrix-palette
   size and the batch strategy for PR 8.
+- Record, per lit list, whether its lighting inputs (vector matrix, lights,
+  material, normals) are the same on consecutive calls. That share decides
+  PR 9's split between baked colours and PICA lighting.
+- Record which lists the in-between scenes match, and how their polygons
+  move between scenes (matrix only, or vertices too). That decides whether PR
+  8 can interpolate matrices instead of vertices.
+- Record which lists the sun-shadow and edge-marking paths read, so PR 8 knows
+  what it must keep producing on the CPU.
 - Run the census on the fixed scene corpus with the same input script as the
   performance protocol.
 - The report is generated locally and summarized in the PR. No game content,
@@ -724,14 +836,23 @@ deterministic, and de-risks the largest PR in the series.
 
 ## 8. `perf/g3d-retained` - keep object-space geometry on the GPU
 
-**Merge case (N3DS):** the geometry thread spends 20-30 ms a scene transforming
-and clipping static meshes on the CPU, and the game waits behind it. Retaining
-object-space geometry and transforming it on the PICA vertex unit returns that
-time to the frame, with the same picture.
+**Merge case (N3DS):** the geometry thread spends about 20-30 ms a scene
+transforming and clipping static meshes on the CPU, plus 3-9 ms building the
+60 FPS in-between scene, and the game waits behind it. Retaining object-space
+geometry and transforming it on the PICA vertex unit returns that time to the
+frame, with the same picture, **provided it works with `fps60` on**, which is
+the New 3DS default. A retained path that falls back whenever interpolation is
+on never runs in the default field configuration and has no N3DS merge case.
 
 **Cost removed:** per-vertex CPU transform, clip, and screen-space vertex
-rewrite for static display lists. The existing path rebuilds and re-uploads the
-same vertices every scene.
+rewrite for static display lists, and the in-between scene's per-polygon
+re-clip for those lists. The existing path rebuilds and re-uploads the same
+vertices every scene.
+
+**Cost added:** PICA vertex work. The GPU is the same 268 MHz part on both
+models and already carries 2x2 supersampling and stereo on the New 3DS, and
+the passthrough shader it replaces is cheaper per vertex. The gate below
+counts it.
 
 **Scope**
 
@@ -744,9 +865,19 @@ same vertices every scene.
   command hash.
 - In: per-scene fallback to the CPU path for dynamic lists and for N3DS-only
   effects that need screen-space vertices.
-- Out: lighting (PR 9), shadows, edge marking, W-buffer, stereo, and 60 FPS
-  interpolation. Those stay on the existing path or disable the retained path
-  for that scene.
+- In: in-between scenes for retained lists by interpolating their matrices
+  (halfway between the two scenes' palettes), matched by list identity, in
+  place of per-polygon clip-space matching. Lists the census shows moving
+  their vertices, not just their matrices, keep the CPU path.
+- In: culling whole retained blocks outside the clip volume's side planes
+  before submitting them (`kohjoh` `413d0cc`: 5.02M → 1.94M triangles over
+  600 frames).
+- In: stereo through the same vertex-program depth shift the passthrough
+  shader already applies.
+- Out: lighting (PR 9), sun shadows, edge marking, and W-buffer. Those stay on
+  the existing path or disable the retained path for that scene. Sun shadows
+  are upstream's most active work and are parked on the 3DS (they hang its
+  GPU); coordinate with the maintainer before touching anything they read.
 - Out: a new texture pipeline; reuse `get_texture` and the existing cache.
 
 **Integration points**
@@ -760,6 +891,11 @@ same vertices every scene.
   depth normalization.
 - New: `gx3d_retained.v.pica`, alongside `gx3d_passthrough.v.pica`.
 - `3ds_port/game/app/port_pica.h`: the new entry points.
+- `3ds_port/nitro/src/port_gx3d.c`'s in-between scenes (`PolyRecord`,
+  `replay_polygon`, `NitroPort_Gx3dSetInterpolation`) and the mailbox
+  (`port_gx3d_mailbox.c`).
+- `3ds_port/nitro/src/port_gx3d_gpusim.c`: the PC stand-in for the PICA path,
+  extended to draw retained batches so the host suite can compare them.
 - Existing tests: `test_gx3d`, `test_gx3d_plumbing`; the `gx3d_replay`
   harness (`make -C 3ds_port/nitro replay`).
 
@@ -785,18 +921,28 @@ same vertices every scene.
 - Depth and fog: preserve the DS's depth semantics. If the existing
   `normalize_depth` behavior is needed, implement the equivalent in the
   retained shader, or keep the scene on the CPU path until it matches.
-- N3DS-only effects: if sun shadows, edge marking, W-buffer, stereo, or
-  interpolation need CPU screen-space vertices, the scene uses the existing
-  path for that frame. The retained path is an optimization, not a
-  replacement for those features. This is the rule that keeps the N3DS
-  feature set intact.
+- In-between scenes: today a halfway scene is made by matching each polygon
+  with the previous scene's in draw order and halving its clip-space
+  vertices. For a retained list whose vertices are fixed in object space, the
+  same result is the list drawn with each matrix halfway between the two
+  scenes'. Halving a matrix is not the same as halving its transformed
+  vertices under perspective, so compare against the CPU halfway scene on the
+  replay corpus and fall back per list where they differ beyond a stated
+  tolerance. The existing "moved more than a quarter of the screen" and "too
+  few matches" rules apply per list.
+- N3DS-only effects: if sun shadows, edge marking, or W-buffer need CPU
+  screen-space vertices, the scene uses the existing path for that frame. The
+  retained path is an optimization, not a replacement for those features.
+  This is the rule that keeps the N3DS feature set intact.
 - Memory: retained buffers live in the linear heap or VRAM, whichever the
   census and the memory log support. They are bounded and evictable; a scene
   that exceeds the budget falls back rather than failing to boot.
 
 **Flags and defaults**
 
-- A `gpuGeometry` level or config key selects retained, CPU, or auto.
+- A `remaster.txt` line (for example `geometry3d retained|cpu|auto`) selects
+  the path. (`geometry.txt` already exists for the geometry thread's core;
+  do not overload it.)
 - Default off until the replay A/B and the golden frames pass; then auto for
   scenes the census classifies as static.
 - Per-scene fallback is logged once, with the reason.
@@ -805,7 +951,10 @@ same vertices every scene.
 
 - `test_gx3d` and `test_gx3d_plumbing` under both host targets.
 - `gx3d_replay` A/B: the same captured stream through the CPU path and the
-  retained path; compare client pixels and final state.
+  retained path; compare client pixels (through `port_gx3d_gpusim.c`) and
+  final state.
+- In-between A/B: CPU halfway scenes against matrix-halfway scenes on the
+  replay corpus, with `fps60` on.
 - In-place rewrite: change a list between scenes and verify the retained copy
   is rebuilt before it is drawn.
 - Matrix-palette overflow: a synthetic batch with more than 16 matrices; verify
@@ -816,8 +965,13 @@ same vertices every scene.
 
 **Performance gate**
 
-- Geometry time per scene moves from 20-30 ms toward 8-12 ms `[TARGET]`.
+- Geometry time per scene, in-between part included, moves from about
+  20-30 ms toward 8-12 ms with `fps60` on `[TARGET]`.
 - The geometry thread's p95 drops; the game's wait behind it drops.
+- GPU work counts (vertices x shader instructions per vertex, triangles,
+  draws) are reported against the passthrough baseline, and the New 3DS's
+  `[perf] display` frame rate with `smooth3d` and stereo at their defaults
+  does not drop.
 - No increase in dropped scenes or missed V-blanks.
 - No regression in scenes that fall back.
 
@@ -832,27 +986,41 @@ same vertices every scene.
   invalidation, a replay test, and a conservative rebuild on any doubt.
 - Risk: memory pressure on N3DS. Mitigation: bounded buffers, eviction, and a
   fallback to the CPU path.
-- Rollback: set `gpuGeometry` to CPU; the existing path is untouched.
+- Rollback: set the geometry line to `cpu`; the existing path is untouched.
 
 **Size and dependencies:** XL. Depends on 7 and 1.
 
 ---
 
-## 9. `perf/g3d-lighting` - move DS-exact lighting to the vertex unit
+## 9. `perf/g3d-lighting` - bake stable lighting; light the rest on the PICA
 
 **Merge case (N3DS):** after retained geometry, per-vertex lighting is the
-remaining CPU cost in the geometry thread. `kohjoh` proved a DS-exact lighting
-model fits PICA at 409 instructions and 94 registers, pixel-exact on held
-frames. The same win is available here for the material modes that fit.
+remaining CPU cost in the geometry thread for lit lists. `kohjoh` proved a
+DS-exact lighting model fits PICA, pixel-exact on held frames, and then found
+on Old 3DS hardware that lighting every map vertex on the PICA cost far more
+than it saved (Goldenrod ~36 → ~57 ms a frame; Azahar did not show it). Its
+winning shape was to bake the lighting of stable lists once on the CPU,
+exactly, and replay the colours through the unlit shader, leaving only lists
+whose lighting really changes on the PICA (EVIDENCE section 2.2). The same
+shape applies here, and it adds no GPU load for static scenery.
 
 **Cost removed:** per-vertex CPU lighting (`light_vertex`, `shade`,
 `make_products`, `update_light_cache`, the normal cache) for scenes that use
-the retained path.
+the retained path: removed outright for baked lists, moved to the PICA for
+the rest.
 
 **Scope**
 
-- In: a PICA vertex-lighting shader that matches the CPU path's fixed-point
-  arithmetic on held frames.
+- In, first: baked colours for retained lists whose lighting key (vector
+  matrix, lights, material, the list's normals) repeats, computed by the
+  existing CPU lighting code and stored with the retained list. Bit-exact by
+  construction. Invalidated when the key changes; a list that misses on
+  consecutive calls is moved to the PICA path and retried later.
+- In, second: a PICA vertex-lighting shader for the lists that cannot be
+  baked, matching the CPU path's fixed-point arithmetic on held frames, with
+  disabled lights and specular-free lights skipped (`kohjoh`: 101 instead of
+  409 instructions for a one-light vertex). Flags in the `.w` of float
+  uniforms, not bool uniforms (they read false in Azahar).
 - In: diffuse, ambient, specular, emission, and the normal cache semantics
   that affect the result.
 - In: per-material fallback when the shader cannot match a mode.
@@ -889,11 +1057,16 @@ the retained path.
   register budget; the census and the shader compiler output decide.
 - The retained geometry path and the lit path are independent flags: retained
   geometry can ship before lighting, and lighting can be disabled without
-  losing retention.
+  losing retention. Baking can ship without the PICA shader.
+- In-between scenes: a baked list's colours are the same in the halfway scene
+  only if its lighting key does not change between the two scenes; otherwise
+  the halfway scene uses the newer scene's colours, as the CPU path's
+  recorded polygons do today (verify against `replay_polygon`).
 
 **Flags and defaults**
 
-- `gpuLighting` level or config key: off, auto, on.
+- A `remaster.txt` line: off, bake (CPU-baked only), auto (bake, PICA for the
+  rest).
 - Default off until the lit-frame comparison passes across the corpus.
 - Per-batch fallback remains.
 
@@ -911,21 +1084,27 @@ the retained path.
 
 - Geometry time drops further against PR 8, especially in the field and
   battles.
-- No increase in dropped scenes.
-- Shader compilation stays within the project's startup budget; log the
-  instruction/register count.
+- The share of lit vertices drawn with the PICA-lit shader, and its
+  instructions per vertex, are reported; most static scenery should be baked.
+- No increase in dropped scenes, and no drop in the `[perf] display` frame
+  rate on New 3DS.
+- Log the shader's instruction and uniform-register count.
 
 **Risks and rollback**
 
 - Risk: a 1-bit color difference on a held frame. Mitigation: exact arithmetic,
   a pixel test, and a per-mode fallback. "Close" is not accepted.
-- Risk: register pressure forces spills. Mitigation: split the shader by
-  material mode, or fall back.
+- Risk: register pressure. `kohjoh`'s float uniform file is full. Mitigation:
+  split the shader by material mode, or fall back.
+- Risk: baked colours go stale. Mitigation: the key includes everything the
+  CPU lighting reads; a mutation test removes each key part and must fail
+  (`kohjoh`'s `g3_lighting_test` caught weak tests this way).
 - Risk: lighting changes interact with the N3DS shadow/edge path. Mitigation:
   keep those on the existing path and do not fold them into the lit shader.
-- Rollback: set `gpuLighting` off; retained geometry still works.
+- Rollback: set the lighting line off; retained geometry still works.
 
-**Size and dependencies:** XL. Depends on 8.
+**Size and dependencies:** XL. Depends on 8. Split on opening: baking (L) and
+the PICA shader (L).
 
 ---
 
@@ -942,7 +1121,10 @@ starvation that the old cost model hides.
 
 - In: measure the new critical path with telemetry, then adjust priorities,
   present-skip hysteresis, and the display thread's wait policy.
-- In: a 2-core scheduling mode for the eventual O3DS tier, kept behind a flag.
+- In: tuning the Old 3DS topology that already exists (geometry on core 1's
+  share, one drawer for both engines on core 0, map drawer on core 0) for the
+  remaster's workload, behind the same `isNew3ds` split. Today it is tuned for
+  the classic display.
 - Out: changing the game's logic rate or the 60 FPS interpolation on N3DS.
 - Out: changing N3DS defaults without evidence.
 
@@ -957,7 +1139,7 @@ starvation that the old cost model hides.
 
 **Design**
 
-- Do not tune by intuition. Run the telemetry corpus after PRs 2-9 and find
+- Do not tune by intuition. Run the telemetry corpus after PRs 3-9 and find
   the new critical path per scene class: field, battle, menu, effect.
 - Adjust in this order:
   1. present-skip hysteresis: skip only when the next scene cannot be ready,
@@ -966,17 +1148,20 @@ starvation that the old cost model hides.
      geometry was 30 ms; it may be wrong when it is 8 ms;
   3. display-thread wait policy: the display thread must not wait behind a
      drawer that is no longer the bottleneck;
-  4. core assignment: keep the N3DS topology; add a 2-core mode for O3DS that
-     merges or serializes work rather than pretending there are four cores.
+  4. core assignment: keep the N3DS topology; on O3DS, revisit the existing
+     2-core split once the backends have moved the costs (the geometry may no
+     longer need core 1's share to itself).
 - Every change is individually switchable and measured. A change that does not
   improve p95/p99 is reverted.
-- The O3DS 2-core mode is not enabled by default and does not affect N3DS.
+- O3DS changes sit behind `isNew3ds == false` and do not affect N3DS. The
+  classic display on O3DS (today's default there) must not regress either;
+  it is the experience current Old 3DS users have.
 
 **Flags and defaults**
 
 - N3DS defaults stay as they are until a scene class shows a measured win.
-- The 2-core mode is opt-in and documented as part of the O3DS tier.
-- A config key restores the old schedule for A/B.
+- O3DS changes apply only with the remaster on; classic is untouched.
+- A `remaster.txt` line restores the old schedule for A/B.
 
 **Correctness tests**
 
@@ -992,7 +1177,10 @@ starvation that the old cost model hides.
 - p99 frame time improves in at least one scene class, with no regression in
   the others.
 - No increase in missed V-blanks or dropped scenes.
-- The 2-core mode is stable on O3DS for 30 minutes (internal gate).
+- The Faster-than-1x speed option still holds its rates (upstream reworked it
+  2026-11-10: "a scene never half left out").
+- The O3DS schedule is stable for 30 minutes with the remaster on (internal
+  gate).
 
 **Risks and rollback**
 
@@ -1003,19 +1191,25 @@ starvation that the old cost model hides.
   expense of the other.
 - Rollback: restore the old constants; the code is unchanged.
 
-**Size and dependencies:** M. Depends on 2-6 and 8-9.
+**Size and dependencies:** M. Depends on 3-6 and 8-9 (and 2, if it went
+ahead).
 
 ---
 
 ## 11. `perf/o3ds-tier` - assemble the opt-in low-end profile
 
-**Merge case (N3DS):** none directly. This PR is the payoff for the O3DS
+**Merge case (N3DS):** none directly, though the same exclusion profile is
+what a New 3DS in the 64 MB memory mode (issue #188) could use instead of
+falling back to the classic display. This PR is the payoff for the O3DS
 stretch goal, and it must not change New 3DS behavior. It is last for that
 reason.
 
 **Cost removed:** the configuration gap between "the shared backends are fast
 enough on O3DS" and "the remaster is actually turned on with the right
-effects."
+effects." Today an Old 3DS user can already write `remaster on`; they get the
+full New 3DS profile (`fps60`, 2x2 `smooth3d`, stereo) on hardware that cannot
+carry it, and the compositor's memory fallback decides the rest. Step 0
+measures what that looks like.
 
 **Scope**
 
@@ -1032,10 +1226,13 @@ effects."
 
 **Integration points**
 
-- `3ds_port/game/app/main_3ds.c`: `ReadRemasterConfig`, `sRemaster`, the
-  option handlers, and `APT_CheckNew3DS`.
-- `3ds_port/game/app/port_compose_pica.c`: the small-display path and the
-  memory checks.
+- `3ds_port/game/app/main_3ds.c`: `ReadRemasterConfig` (already passed
+  `new3ds`, already defaulting `sRemaster` to it), the option handlers, and
+  `APT_CheckNew3DS`.
+- `3ds_port/game/app/port_compose_pica.c`: the smaller-display path
+  (`COMPOSE_TEXTURE_ROOM`, issue #188) and the memory checks.
+- The in-game options page (`port_options.c`, `test_options`), if the tier is
+  to be selectable there and not only in `remaster.txt`.
 - `docs/REMASTER.md` or a new `docs/O3DS.md`: the profile and its limits.
 - `test_options` and a config-parse test.
 
@@ -1045,8 +1242,9 @@ effects."
   `tier o3ds` turns on the remaster with the exclusion list.
 - The tier is parsed into its own variable and resolved after the whole file,
   so `remaster on` and `tier o3ds` mean the same thing in either order.
-- On O3DS, `remaster on` without a tier selects the `o3ds` tier, or logs a
-  warning and falls back to classic. It never applies the N3DS profile blindly.
+- On O3DS, `remaster on` without a tier selects the `o3ds` tier. This changes
+  what existing O3DS `remaster on` users get, so the PR says so, and an
+  explicit `tier n3ds` keeps today's behaviour for anyone who wants it.
 - The tier is a profile, not a separate renderer. It selects the shared
   backends and turns off the effects that do not fit.
 - On boot, check the memory and VRAM budget before allocating the compositor.
@@ -1068,6 +1266,7 @@ effects."
 - Config parse: `tier o3ds`, `tier n3ds`, unknown tier, missing keys.
 - Boot on O3DS with the tier on: both screens, 3D, menu, audio, save.
 - Boot on O3DS with the tier off: classic display, unchanged.
+- Boot on O3DS with `remaster on` and no tier: the tier, logged as such.
 - Forced allocation failure: clean fallback, no crash.
 - Save round-trip: write, reboot, load.
 - N3DS regression: the tier-off logs and golden frames match the pre-PR
@@ -1101,8 +1300,13 @@ covers the cost, this is unnecessary complexity.
 
 **Merge case (N3DS):** `kohjoh` replays 74% of FIFO words, and its hotpaths A/B
 (display-list cache, state-only replay, compact hot loops) cut Azahar game logic
-from 16.648 ms to 15.430 ms (-7.3%). The same shape of repeated decode exists
-in `pokeplatinum`'s G3 stream.
+from 16.648 ms to 15.430 ms (-7.3%). Its later NNS GLB state-list snapshot
+(restore the pure-setter prefix, execute only the last packed word; `e587d4c`)
+took another 0.3 ms. The same shape of repeated decode likely exists in
+`pokeplatinum`'s G3 stream, which also goes through NitroSystem's G3D; the
+census says. Note that upstream already hashes each scene's commands on the
+game's thread as they enter the ring (`NitroPort_Gx3dSameAs`) to skip
+identical scenes during field effects; a list cache should reuse that hash.
 
 **Scope**
 
@@ -1167,10 +1371,14 @@ Before opening any PR:
 - [ ] The branch name matches the brief (`perf/...`).
 - [ ] The diff contains one idea and no line-ending-only files.
 - [ ] The old path is selectable and the new path defaults off until gated.
+- [ ] The branch is rebased on current `main`, and its merge-case number was
+      measured on current `main`, not quoted from an old doc.
 - [ ] `make test` passes, and so do the host32 suites.
-- [ ] `make game` builds for 3DS.
+- [ ] `make game` builds for 3DS, and the build runs in Azahar.
 - [ ] The PR includes before/after logs, the scene, the build, and the
-      hardware.
+      hardware (New 3DS logs show the 804 MHz speed-up accepted).
+- [ ] If the PR moves work to the GPU, it reports GPU work counts.
+- [ ] Checked with the remaster on and off, and with `fps60` on and off.
 - [ ] The correctness test is deterministic and does not require the
       maintainer's hardware.
 - [ ] No game content, no captured assets, no ROM-derived files.
@@ -1191,3 +1399,6 @@ Before opening any PR:
 - A default change that turns on an unproven path for existing New 3DS users.
 - Any claim that "kohjoh does it" is sufficient evidence for a `pokeplatinum`
   scene. The census and the pixel tests decide.
+- An Azahar frame time as evidence for a GPU-side change.
+- A cost quoted from `REMASTER.md` without checking whether a later commit
+  already fixed it.
