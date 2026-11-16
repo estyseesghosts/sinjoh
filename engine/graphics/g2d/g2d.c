@@ -177,6 +177,12 @@ typedef struct ctx {
     const uint8_t *obj_vram;
     uint32_t obj_vram_size;
     int y0, y1; /* span lines [y0, y1) */
+    /* The view: DS pixel -> physical pixel, and the physical rectangle the
+     * draw is clipped to. The screen draw uses the target's own scale, offset
+     * and full rectangle; the lower-screen menu's panel passes its own. */
+    float sx, sy, ox, oy;
+    int clip_x0, clip_y0, clip_x1, clip_y1;
+    bool full; /* the screen's own draw: whole target, master brightness to the edges */
 } ctx;
 
 /* ------------------------------------------------------------ quad emit */
@@ -573,14 +579,37 @@ static uint32_t objs(const ctx *c, int prio, bool semi, run *out)
 
 /* ------------------------------------------------------------- passes */
 
-static void set_xform(const kj_target *t)
+static void set_xform(const ctx *c)
 {
     /* clip.x = 1 - y_phys/120 ; clip.y = 1 - x_phys/(w/2)
-     * y_phys = y * scale ; x_phys = x * scale + offset */
-    const float half_w = t->width / 2.0f;
-    C3D_FVUnifSet(GPU_VERTEX_SHADER, kj_gpu_uloc_2d_xform(), -t->scale / 120.0f, 1.0f,
-                  -t->scale / half_w, 1.0f - t->offset_x / half_w);
+     * y_phys = y * sy + oy ; x_phys = x * sx + ox */
+    const float half_w = c->target->width / 2.0f;
+    C3D_FVUnifSet(GPU_VERTEX_SHADER, kj_gpu_uloc_2d_xform(), -c->sy / 120.0f,
+                  1.0f - c->oy / 120.0f, -c->sx / half_w, 1.0f - c->ox / half_w);
     kj_gpu_set_2d_uvscale(KJ_ATLAS_SIZE, KJ_ATLAS_SIZE);
+}
+
+/* The physical rectangle this span draws in: the view's clip, narrowed to
+ * the span's own DS lines. */
+static void scissor_span(const ctx *c)
+{
+    int y0 = (int)(c->y0 * c->sy + c->oy);
+    int y1 = (int)(c->y1 * c->sy + c->oy);
+    if (y0 < c->clip_y0) {
+        y0 = c->clip_y0;
+    }
+    if (y1 > c->clip_y1) {
+        y1 = c->clip_y1;
+    }
+    if (y1 < y0) {
+        y1 = y0;
+    }
+    kj_gpu_scissor(c->target->width, c->clip_x0, y0, c->clip_x1, y1);
+}
+
+static void scissor_clip(const ctx *c)
+{
+    kj_gpu_scissor(c->target->width, c->clip_x0, c->clip_y0, c->clip_x1, c->clip_y1);
 }
 
 typedef struct fx {
@@ -662,8 +691,7 @@ static void draw_band(const ctx *c, const drawable *band)
     }
     kj_gpu_bind_texture(0, kj_wideart_texture());
     kj_gpu_set_2d_uvscale(kj_wideart_texture_width(), kj_wideart_texture_height());
-    kj_gpu_scissor(c->target->width, 0, (int)(c->y0 * c->target->scale), c->target->width,
-                   (int)(c->y1 * c->target->scale));
+    scissor_span(c);
     draw_quads(band);
 #ifdef KJ_WIDEART_DEBUG
     {
@@ -836,8 +864,11 @@ static void master_brightness(const ctx *c, uint16_t mb)
     if (!rect_quad(-64, 0, 320, 192, mode == 1 ? 0xFFFFFFFFu : 0xFF000000u, &q)) {
         return;
     }
-    (void)c;
-    kj_gpu_scissor_off();
+    if (c->full) {
+        kj_gpu_scissor_off();
+    } else {
+        scissor_clip(c);
+    }
     kj_gpu_tev_vertex_color();
     C3D_BlendingColor(k << 24);
     C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, GPU_CONSTANT_ALPHA, GPU_ONE_MINUS_CONSTANT_ALPHA,
@@ -1662,13 +1693,12 @@ static void prepare_span(const ctx *c, bool retain, prepared *pr)
 static void restore_2d_state(const ctx *c, int sx0)
 {
     (void)sx0;
-    /* The wide canvas: the whole target, so the edge bands and the wide
-     * art may draw beside the DS's picture (the DS's own quads still stay
-     * inside it). */
-    kj_gpu_scissor(c->target->width, 0, (int)(c->y0 * c->target->scale), c->target->width,
-                   (int)(c->y1 * c->target->scale));
+    /* The wide canvas: the whole view rectangle, so the edge bands and the
+     * wide art may draw beside the DS's picture (the DS's own quads still
+     * stay inside it). */
+    scissor_span(c);
     kj_gpu_use_program(KJ_PROGRAM_2D);
-    set_xform(c->target);
+    set_xform(c);
     kj_gpu_bind_texture(0, kj_atlas_texture());
     kj_gpu_tev_texture_modulate();
     C3D_DepthTest(false, GPU_ALWAYS, GPU_WRITE_COLOR);
@@ -1725,7 +1755,8 @@ static uint32_t ds_to_rgba(uint16_t c)
            0xFFu;
 }
 
-void kj_screen_draw(int screen, int engine, const kj_frame_input *in)
+static void screen_draw_impl(int screen, int engine, const kj_frame_input *in,
+                             const kj_g2d_view *view, bool clear)
 {
     const kj_target *target = kj_target_get(screen);
     const kj_ds_memory *mem = in->mem;
@@ -1741,6 +1772,26 @@ void kj_screen_draw(int screen, int engine, const kj_frame_input *in)
     c.bg_vram_size = engine == 0 ? 0x80000u : 0x20000u;
     c.obj_vram = engine == 0 ? mem->obj_vram_a : mem->obj_vram_b;
     c.obj_vram_size = engine == 0 ? 0x40000u : 0x20000u;
+    if (view != NULL) {
+        c.sx = view->sx;
+        c.sy = view->sy;
+        c.ox = view->ox;
+        c.oy = view->oy;
+        c.clip_x0 = view->clip_x0;
+        c.clip_y0 = view->clip_y0;
+        c.clip_x1 = view->clip_x1;
+        c.clip_y1 = view->clip_y1;
+        c.full = false;
+    } else {
+        c.sx = c.sy = target->scale;
+        c.ox = target->offset_x;
+        c.oy = 0.0f;
+        c.clip_x0 = 0;
+        c.clip_y0 = 0;
+        c.clip_x1 = target->width;
+        c.clip_y1 = 240;
+        c.full = true;
+    }
 
     const uint8_t *io = mem->io + engine * 0x1000;
     const uint32_t dispcnt = r32(io, 0);
@@ -1765,7 +1816,7 @@ void kj_screen_draw(int screen, int engine, const kj_frame_input *in)
         c.dispcnt = dispcnt;
         prepare_span(&c, true, &pr);
         prepared_ok = true;
-        if (pr.all_reused && !has_3d && memo->drawn && memo->engine == engine &&
+        if (c.full && pr.all_reused && !has_3d && memo->drawn && memo->engine == engine &&
             memcmp(memo->regs, io, KJ_LINE_REG_BYTES) == 0 && memcmp(memo->pal, pal, 1024) == 0) {
 #ifndef HGSS_PROFILE_OFF
             ++s_skipped_screens;
@@ -1780,9 +1831,15 @@ void kj_screen_draw(int screen, int engine, const kj_frame_input *in)
     C3D_FrameDrawOn(target->rt);
 
     if (forced_blank || display_mode == 0) {
-        C3D_RenderTargetClear(target->rt, C3D_CLEAR_ALL, 0xFFFFFFFFu, 0);
+        if (clear) {
+            C3D_RenderTargetClear(target->rt, C3D_CLEAR_ALL, 0xFFFFFFFFu, 0);
+        } else {
+            kj_g2d_fill_rects(screen,
+                              &(kj_g2d_rect){ c.clip_x0, c.clip_y0, c.clip_x1, c.clip_y1, 0xFFFFFFFFu },
+                              1);
+        }
         kj_gpu_use_program(KJ_PROGRAM_2D);
-        set_xform(target);
+        set_xform(&c);
         master_brightness(&c, r16(io, 0x6C));
         kj_perf_add(KJ_PERF_G2D, kj_perf_now() - t0);
         return;
@@ -1791,15 +1848,29 @@ void kj_screen_draw(int screen, int engine, const kj_frame_input *in)
 #ifndef HGSS_PROFILE_OFF
         ++s_stats.unsupported_modes; /* VRAM / main-memory display: tracked blocker */
 #endif
-        C3D_RenderTargetClear(target->rt, C3D_CLEAR_ALL, 0x000000FFu, 0);
+        if (clear) {
+            C3D_RenderTargetClear(target->rt, C3D_CLEAR_ALL, 0x000000FFu, 0);
+        } else {
+            kj_g2d_fill_rects(screen,
+                              &(kj_g2d_rect){ c.clip_x0, c.clip_y0, c.clip_x1, c.clip_y1, 0x000000FFu },
+                              1);
+        }
         kj_perf_add(KJ_PERF_G2D, kj_perf_now() - t0);
         return;
     }
 
     /* Depth clear: far is 0 in Z mode, 1 in W mode (g3d.c). */
     const u32 far_depth = has_3d && kj_g3d_wbuffer() ? 0xFFFFFFu : 0u;
-    C3D_RenderTargetClear(target->rt, C3D_CLEAR_ALL, ds_to_rgba(pal[0]),
-                          ((u32)bd_flags << 24) | far_depth);
+    if (clear) {
+        C3D_RenderTargetClear(target->rt, C3D_CLEAR_ALL, ds_to_rgba(pal[0]),
+                              ((u32)bd_flags << 24) | far_depth);
+    } else {
+        /* A view keeps what is outside it: paint the DS backdrop in the
+         * view's rectangle only (the menu's panel interior). */
+        kj_g2d_fill_rects(
+            screen,
+            &(kj_g2d_rect){ c.clip_x0, c.clip_y0, c.clip_x1, c.clip_y1, ds_to_rgba(pal[0]) }, 1);
+    }
 
     bool drew_3d = false;
     if (prepared_ok) {
@@ -1824,16 +1895,148 @@ void kj_screen_draw(int screen, int engine, const kj_frame_input *in)
             y0 = y1;
         }
     }
-    kj_gpu_scissor_off();
+    if (c.full) {
+        kj_gpu_scissor_off();
+    } else {
+        scissor_clip(&c);
+    }
     kj_gpu_use_program(KJ_PROGRAM_2D);
-    set_xform(target);
+    set_xform(&c);
     master_brightness(&c, r16(io, 0x6C));
 
-    memo->drawn = single_span;
+    memo->drawn = single_span && c.full;
     memo->engine = engine;
     memcpy(memo->regs, io, KJ_LINE_REG_BYTES);
     memcpy(memo->pal, pal, 1024);
     kj_perf_add(KJ_PERF_G2D, kj_perf_now() - t0);
+}
+
+void kj_screen_draw(int screen, int engine, const kj_frame_input *in)
+{
+    screen_draw_impl(screen, engine, in, NULL, true);
+}
+
+void kj_screen_draw_view(int screen, int engine, const kj_frame_input *in,
+                         const kj_g2d_view *view)
+{
+    screen_draw_impl(screen, engine, in, view, false);
+}
+
+/* Chrome drawn straight in physical pixels: DS pixel == physical pixel. */
+static void identity_ctx(ctx *c, int screen, int x0, int y0, int x1, int y1)
+{
+    const kj_target *t = kj_target_get(screen);
+    memset(c, 0, sizeof(*c));
+    c->target = t;
+    c->sx = c->sy = 1.0f;
+    c->ox = c->oy = 0.0f;
+    c->clip_x0 = x0 < 0 ? 0 : x0;
+    c->clip_y0 = y0 < 0 ? 0 : y0;
+    c->clip_x1 = x1 > t->width ? t->width : x1;
+    c->clip_y1 = y1 > 240 ? 240 : y1;
+    c->full = false;
+}
+
+void kj_g2d_fill_rects(int screen, const kj_g2d_rect *rects, int count)
+{
+    if (rects == NULL || count <= 0) {
+        return;
+    }
+    const kj_target *t = kj_target_get(screen);
+    ctx c;
+    identity_ctx(&c, screen, 0, 0, t->width, 240);
+    uint32_t first;
+    kj_v2d *v = kj_gpu_quads_alloc((uint32_t)count, &first);
+    if (v == NULL) {
+        return;
+    }
+    int n = 0;
+    for (int i = 0; i < count; ++i) {
+        const kj_g2d_rect *r = &rects[i];
+        const int x0 = r->x0 < c.clip_x0 ? c.clip_x0 : r->x0;
+        const int y0 = r->y0 < c.clip_y0 ? c.clip_y0 : r->y0;
+        const int x1 = r->x1 > c.clip_x1 ? c.clip_x1 : r->x1;
+        const int y1 = r->y1 > c.clip_y1 ? c.clip_y1 : r->y1;
+        if (x1 <= x0 || y1 <= y0) {
+            continue;
+        }
+        const uint8_t cr = r->rgba & 255, cg = (r->rgba >> 8) & 255, cb = (r->rgba >> 16) & 255,
+                      ca = r->rgba >> 24;
+        kj_v2d *q = v + n * 4;
+        q[0] = (kj_v2d){ (int16_t)x0, (int16_t)y0, 0, 0, cr, cg, cb, ca };
+        q[1] = (kj_v2d){ (int16_t)x1, (int16_t)y0, 0, 0, cr, cg, cb, ca };
+        q[2] = (kj_v2d){ (int16_t)x0, (int16_t)y1, 0, 0, cr, cg, cb, ca };
+        q[3] = (kj_v2d){ (int16_t)x1, (int16_t)y1, 0, 0, cr, cg, cb, ca };
+        ++n;
+    }
+    if (n == 0) {
+        kj_gpu_quads_reset_to(first);
+        return;
+    }
+    C3D_FrameDrawOn(c.target->rt);
+    kj_gpu_use_program(KJ_PROGRAM_2D);
+    set_xform(&c);
+    kj_gpu_tev_vertex_color();
+    blend_off();
+    C3D_DepthTest(false, GPU_ALWAYS, 0);
+    C3D_AlphaTest(false, GPU_ALWAYS, 0);
+    C3D_CullFace(GPU_CULL_NONE);
+    C3D_StencilTest(false, GPU_ALWAYS, 0, 0, 0);
+    scissor_clip(&c);
+    kj_gpu_draw_quads(first, (uint32_t)n);
+    kj_gpu_quads_reset_to(first + (uint32_t)n);
+}
+
+void kj_g2d_tiles(int screen, const kj_g2d_tile_rect *rects, int count)
+{
+    if (rects == NULL || count <= 0) {
+        return;
+    }
+    const kj_target *t = kj_target_get(screen);
+    ctx c;
+    identity_ctx(&c, screen, 0, 0, t->width, 240);
+    uint32_t first;
+    kj_v2d *v = kj_gpu_quads_alloc((uint32_t)count, &first);
+    if (v == NULL) {
+        return;
+    }
+    int n = 0;
+    for (int i = 0; i < count; ++i) {
+        const kj_g2d_tile_rect *r = &rects[i];
+        const int x0 = r->x0 < c.clip_x0 ? c.clip_x0 : r->x0;
+        const int y0 = r->y0 < c.clip_y0 ? c.clip_y0 : r->y0;
+        const int x1 = r->x1 > c.clip_x1 ? c.clip_x1 : r->x1;
+        const int y1 = r->y1 > c.clip_y1 ? c.clip_y1 : r->y1;
+        if (x1 <= x0 || y1 <= y0) {
+            continue;
+        }
+        int16_t u0, v0, u1, v1;
+        kj_atlas_slot_uv(r->slot, &u0, &v0, &u1, &v1);
+        kj_v2d *q = v + n * 4;
+        q[0] = (kj_v2d){ (int16_t)x0, (int16_t)y0, u0, v0, 255, 255, 255, 255 };
+        q[1] = (kj_v2d){ (int16_t)x1, (int16_t)y0, u1, v0, 255, 255, 255, 255 };
+        q[2] = (kj_v2d){ (int16_t)x0, (int16_t)y1, u0, v1, 255, 255, 255, 255 };
+        q[3] = (kj_v2d){ (int16_t)x1, (int16_t)y1, u1, v1, 255, 255, 255, 255 };
+        ++n;
+    }
+    if (n == 0) {
+        kj_gpu_quads_reset_to(first);
+        return;
+    }
+    C3D_FrameDrawOn(c.target->rt);
+    kj_gpu_use_program(KJ_PROGRAM_2D);
+    set_xform(&c);
+    kj_gpu_bind_texture(0, kj_atlas_texture());
+    kj_gpu_tev_texture_modulate();
+    kj_gpu_set_2d_uvscale(KJ_ATLAS_SIZE, KJ_ATLAS_SIZE);
+    blend_off();
+    C3D_DepthTest(false, GPU_ALWAYS, GPU_WRITE_COLOR);
+    C3D_AlphaTest(true, GPU_GREATER, 0);
+    C3D_CullFace(GPU_CULL_NONE);
+    C3D_StencilTest(false, GPU_ALWAYS, 0, 0, 0);
+    scissor_clip(&c);
+    kj_gpu_draw_quads(first, (uint32_t)n);
+    kj_gpu_quads_reset_to(first + (uint32_t)n);
 }
 
 /* ---------------------------------------------------------------- init */

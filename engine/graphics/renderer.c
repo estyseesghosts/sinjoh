@@ -23,6 +23,7 @@
 #include "graphics/g2d/g2d.h"
 #include "graphics/g3d/g3d.h"
 #include "graphics/g3d/textures.h"
+#include "graphics/menu/lowermenu.h"
 #include "graphics/pica/gpu.h"
 #include "graphics/pica/targets.h"
 #include "graphics/resources/atlas.h"
@@ -175,7 +176,13 @@ void kj_ctr_publish_frame(const kj_frame_input *in)
     /* Engine A (and the 3D layer) is on the screen POWCNT1 says. */
     const int top_engine = in->engine_a_on_top ? 0 : 1;
     kj_screen_draw(KJ_SCREEN_TOP, top_engine, in);
-    kj_screen_draw(KJ_SCREEN_BOTTOM, top_engine ^ 1, in);
+    if (kj_lowermenu_active()) {
+        /* The field's lower screen is the menu: the DS's lower screen in the
+         * panel plus the buttons (pokeplatinum-3ds's remaster layout). */
+        kj_lowermenu_draw(in, top_engine ^ 1);
+    } else {
+        kj_screen_draw(KJ_SCREEN_BOTTOM, top_engine ^ 1, in);
+    }
 
 #ifndef HGSS_PROFILE_OFF
     s_queue_pending = kj_target_get(KJ_SCREEN_TOP)->rt->used ||

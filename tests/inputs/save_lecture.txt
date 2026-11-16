@@ -1,0 +1,6 @@
+# With a save present: skip the copyright (A at 200), then hold on the
+# title screen where CONTINUE is, to see what the save made.
+every: 10
+200-206 A
+freeze 1200 30
+end: 4000

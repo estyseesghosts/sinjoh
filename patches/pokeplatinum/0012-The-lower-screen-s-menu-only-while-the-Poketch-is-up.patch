@@ -1,0 +1,59 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: pokeplatinum-3ds <noreply@users.noreply.github.com>
+Date: Mon, 16 Nov 2026 00:00:00 -0700
+Subject: [PATCH] The lower screen's menu only while the Poketch is up
+ (SDK_PORT_3DS)
+
+The remaster's lower screen is the port's menu in the field: the panel
+with the DS's lower screen and the buttons beside it
+(engine/graphics/menu/lowermenu.c). The Poketch's bottom-screen handlers
+are where the field's lower screen is the Poketch: turn the menu on in
+their init and off in their end, as pokeplatinum-3ds does in patch 0031.
+Nowhere else (the title sequence, the opening, battles, the underground,
+the Union Room) is the DS's lower screen replaced.
+---
+ src/overlay005/ov5_021D5BC0.c | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+
+diff --git a/src/overlay005/ov5_021D5BC0.c b/src/overlay005/ov5_021D5BC0.c
+--- a/src/overlay005/ov5_021D5BC0.c
++++ b/src/overlay005/ov5_021D5BC0.c
+@@ -10,6 +10,16 @@
+ #include "field_comm_manager.h"
+ #include "game_overlay.h"
+ 
++#ifdef SDK_PORT_3DS
++#include <stdbool.h>
++
++// The remaster's lower screen is the field's menu while the Poketch is up
++// (engine/graphics/menu/lowermenu.c): the panel with the DS's lower screen
++// and the buttons beside it. Only here: the title, battles and the other
++// bottom screens keep the DS's lower screen.
++extern void kj_lowermenu_set_active(bool on);
++#endif
++
+ FS_EXTERN_OVERLAY(overlay56);
+ 
+ typedef struct BottomScreenHandlers {
+@@ -81,6 +91,9 @@ BOOL FieldSystem_IsBottomScreenDone(FieldSystem *fieldSystem)
+ static void ov5_021D5C4C(FieldSystem *fieldSystem)
+ {
+     ov5_021EA728(fieldSystem);
++#ifdef SDK_PORT_3DS
++    kj_lowermenu_set_active(true);
++#endif
+ }
+ 
+ static void ov5_021D5C54(FieldSystem *fieldSystem)
+@@ -97,6 +110,9 @@ static void ov5_021D5C5C(FieldSystem *fieldSystem)
+ static void ov5_021D5C78(FieldSystem *fieldSystem)
+ {
+     ov5_021EA790(fieldSystem);
++#ifdef SDK_PORT_3DS
++    kj_lowermenu_set_active(false);
++#endif
+ }
+ 
+ static void ov5_021D5C80(FieldSystem *fieldSystem)
+-- 
+2.43.0

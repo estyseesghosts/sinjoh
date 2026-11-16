@@ -1,0 +1,14 @@
+# The save is in the player's room. Skip the opening, load the save, walk
+# two tiles up to the TV and press A: the broadcast screen the scanline
+# report is about.
+every: 10
+200-206 A
+230-236 A
+260-266 A
+290-296 A
+320-326 A
+350-356 A
+500-516 UP
+540-546 A
+freeze 620 30
+end: 4000

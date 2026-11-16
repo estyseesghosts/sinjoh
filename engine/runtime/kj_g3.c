@@ -651,6 +651,12 @@ void kj_g3_init(const kj_g3_storage *storage)
         s_buf[i].verts = storage->verts[i];
         s_buf[i].indices = storage->indices[i];
     }
+    /* The remaster's top screen shows 25% more horizontal clip space than
+     * the DS (320 DS pixels of scene across 400 physical). The game culls
+     * with G3BOX against the DS's clip volume, so the box test is widened
+     * to match; the renderer's fixup already maps the extension to the
+     * bands. The lower target clips whatever the extension adds there. */
+    s_wide = true;
     mtx_identity(&s_proj);
     mtx_identity(&s_pos);
     mtx_identity(&s_vec);

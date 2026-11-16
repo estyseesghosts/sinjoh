@@ -17,6 +17,7 @@
 #include "diagnostics/crash.h"
 #include "diagnostics/log.h"
 #include "diagnostics/perf.h"
+#include "graphics/menu/lowermenu.h"
 #include "graphics/renderer.h"
 #include "runtime/kj_bridge.h"
 #include "storage/paths.h"
@@ -187,6 +188,7 @@ int main(int argc, char **argv)
         snprintf(script, sizeof(script), "%s/script.txt", paths->root);
         kj_script_load(script);
     }
+    kj_lowermenu_init(paths->root);
     gfxInitDefault();
     gfxSet3D(false);
 

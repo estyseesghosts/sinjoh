@@ -31,6 +31,19 @@ Verified 2026-11-16, Old 3DS profile in Azahar 2126.2. "Implemented",
     goes on"). Atlas quads only, at most 48 per layer.
   - The 2D scissor is the whole target, so bands and pictures can draw
     beside the DS's picture; the DS's own quads still stay inside it.
+- The lower-screen field menu, engine side and game side:
+  - `engine/graphics/menu/lowermenu.c`: pokeplatinum-3ds's remaster layout
+    (`REMASTER.md`, "The lower screen as a menu") as GPU quads: a panel with
+    the DS's own lower screen at 15/16 (the Poketch, or the Poké Ball before
+    the player has one), a column of eight buttons with icons and names, and
+    two registered-item squares. The panel is the 2D interpreter through a
+    view (`kj_screen_draw_view`); the chrome is two batched fill/tile draws;
+    the font and icons are procedural 4bpp DS tiles in the same atlas as the
+    game's layers. No CPU surface, no per-frame texture work.
+  - `patches/pokeplatinum/0012`: the Poketch's bottom-screen handlers turn
+    the menu on in their init and off in their end (pokeplatinum-3ds patch
+    0031's hook points), so the title sequence, opening, battles, underground
+    and Union Room keep the DS's lower screen.
 - `tools/build.ps1` builds through devkitPro's MSYS2 shell; `engine/game.mk`
   converts response-file paths with `cygpath -w -m -f`, so the repo builds
   from any MSYS2 mount (`/home/<user>` included).
@@ -62,10 +75,38 @@ Verified 2026-11-16, Old 3DS profile in Azahar 2126.2. "Implemented",
   0..40 and 360..400 carry the picture's edge colour, row for row, e.g.
   band `(82,33,33)` at rows 200..500 against the DS edge's `(82,33,33)`.
   The white bars (the target clear colour, palette entry 0) are gone.
+- Lower-screen menu gated by the game (`build/azahar/glue1`, `titlecheck`):
+  loading the real save reaches the field and logs
+  `11.622 [menu] field lower screen on`; the held field capture shows the
+  panel with the DS's lower screen (the Poké Ball: this save has no
+  Pokétch), the eight buttons and the two registered-item squares. The same
+  build's title capture (`t005`, `t010`) shows the copyright screen and the
+  DS's ESRB lower screen with no menu chrome, and its log has no
+  `field lower screen on` line.
+- `PROFILE=1` field run (`build/azahar/perf1`, 130 s, no freeze so the
+  publish loop keeps running; the field and the menu are up from 11.6 s).
+  Windows 2-5 are steady field state, 600 publishes each:
+
+  | stage | p50 | p95 | p99 | max |
+  |---|---|---|---|---|
+  | logic | 3162-3167 | 4302-4365 | 5273-5525 | 6908-7531 |
+  | publish | 1507 | 2549-2721 | 2745-2811 | 2778-2885 |
+  | g2d | 364 | 454 | 1499-1593 | 1627-1697 |
+  | g3d | 603 | 693 | 1724-1855 | 1873-1942 |
+  | submit | 294 | 346-353 | 1298-1512 | 1552-1672 |
+  | gpu_wait | 3 | 3 | 3 | 3-93 |
+
+  (microseconds; logic and active include preemption and exclude the
+  V-blank wait). Active logic+publish p50 4685-4688, p99 6780-7033. Frame
+  time p50 33441 us, p99 34633-34680. Emulated publish interval p50 and max
+  2 V-blanks, 0 deadline misses, 0 skipped presents, 0 hitches in every
+  steady window. Window 1 covers boot and the opening: max logic 190 ms at
+  frames 2-195, i.e. transitions, not steady state.
 
 ## Verified facts
 
-- Bootstrap: 3 checkouts, 0 patches (the sinjoh stacks are not written yet).
+- Bootstrap: 3 checkouts and 44 patches (12 pokeplatinum, 27 NitroSDK, 5
+  NitroSystem).
 - Source inventory: 1042 meson sources; 1014 linker objects across 125
   sections (Static main, 2 autoloads, 122 overlays); 1012 mapped; the two
   unmapped entries are `libos.a` and `trainer_ai_script.o`.
@@ -83,20 +124,27 @@ Verified 2026-11-16, Old 3DS profile in Azahar 2126.2. "Implemented",
 ## Not verified
 
 - No real-O3DS run. Azahar is an integration debugger, not a timing
-  authority.
-- No frame-time measurement of the shipping path yet (the perf ring exists,
-  `PROFILE=1`).
-- The 3D wide camera, the lower-screen field menu, and the screens
-  pokeplatinum-3ds lays out in parts are not implemented.
+  authority: its O3DS profile does not model instruction cache, service-core
+  contention, SD stalls or VRAM hazards, so the field numbers above are
+  `AZAHAR_PASS` only.
+- The measurement covers one interior field scene (the player's room, via the
+  real save). The acceptance corpus wants the worst-case outdoor scenes and a
+  10-minute run; neither exists yet.
+- The 3D wide camera is unverified in the field. The lower-screen menu draws
+  its buttons but nothing drives the cursor yet, the start menu still draws
+  its own window (patch 0032 in the reference), and the panel apps (map,
+  bag, party, trainer case, save, options, quick access) are absent.
+- The screens pokeplatinum-3ds lays out in parts are not implemented.
 
 ## Next
 
-1. 3D wide view: the projection's clip x scaled by 0.8 and the top target's
-   fixup mapping the DS's 256-pixel clip range across 400 px (320 DS px
-   visible), gated on the top screen; the reference's
-   `NitroPort_Gx3dSetWideView(320)`.
-2. Lower-screen field menu (`engine` + game glue), following
-   pokeplatinum-3ds's `port_lowermenu.c` contract but with the menu drawn as
-   GPU quads from an atlas, not a CPU surface.
-3. Measure: `PROFILE=1` run of the field, read the perf ring; remove the
-   costs that show up (atlas rebuilds, per-frame texture binds).
+1. 3D wide view: verify the enabled box test in a 3D field scene; the
+   projection's clip x scaled by 0.8 and the top target's fixup mapping the
+   DS's 256-pixel clip range across 400 px (320 DS px visible), gated on the
+   top screen; the reference's `NitroPort_Gx3dSetWideView(320)`.
+2. The start menu as the lower menu (reference patch 0032): the cursor is
+   the lower screen's buttons, its window and icons hidden, its task still
+   opening the apps.
+3. Measure the worst-case scenes (outdoor routes, battle) the same way, then
+   a 10-minute steady run. The interior field has ~28 ms of headroom per
+   frame, so cost removal there is not justified by data.
