@@ -30,6 +30,9 @@
 #include <string.h>
 
 static const kj_g3_frame *s_frame;
+/* The remaster's wide view: the top screen shows 1.25x the DS's horizontal
+ * field of view (pokeplatinum-3ds's NitroPort_Gx3dSetWideView(320)). */
+static bool s_wide;
 static kj_g3d_stats s_stats;
 
 /* Redundant-state filter for one kj_g3d_draw (reset at its start, after the
@@ -102,13 +105,23 @@ static void make_fixup(const kj_target *t, uint32_t vp, bool wbuffer, float f[4]
     const float vh = (float)(((vp >> 24) & 0xFF)) - y1 + 1.0f;
     const float a = t->scale / 120.0f;
     const float half_w = t->width / 2.0f;
-    const float b = t->scale / half_w;
+    /* The DS's full-width viewport: the wide view stretches its 256-pixel
+     * clip range across the whole top target (400 px) and clips x at
+     * 256/320 of it, so the screen shows 1.25x the field of view while the
+     * DS's own picture keeps its 1.25x pixel scale. A narrower viewport is
+     * the game's own and stays on the DS's mapping. */
+    const bool wide = s_wide && vw == 256.0f;
+    const float b = (wide ? t->width / 256.0f : t->scale) / half_w;
+    const float ox = wide ? 0.0f : t->offset_x;
 
     memset(f, 0, sizeof(float) * 16);
     f[0][1] = a * vh / 2.0f;
     f[0][3] = 1.0f - a * (192.0f - y1 - vh / 2.0f);
     f[1][0] = -b * vw / 2.0f;
-    f[1][3] = 1.0f - t->offset_x / half_w - b * (x1 + vw / 2.0f);
+    if (wide) {
+        f[1][0] *= 256.0f / 320.0f; /* the wider clip: clip x * 0.8 */
+    }
+    f[1][3] = 1.0f - ox / half_w - b * (x1 + vw / 2.0f);
     if (wbuffer) {
         f[2][3] = -W_DEPTH_SCALE;
     } else {
@@ -340,7 +353,7 @@ static void draw_pass(const kj_target *target, bool translucent_pass, uint32_t d
 void kj_g3d_draw(const kj_target *target, bool wide, uint8_t stencil_flags)
 {
     const kj_g3_frame *f = s_frame;
-    (void)wide;
+    s_wide = wide;
     if (f == NULL || f->batch_count == 0) {
         return;
     }
