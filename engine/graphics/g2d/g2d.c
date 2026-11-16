@@ -733,6 +733,12 @@ static void draw_layer(const ctx *c, const fx *f, int layer, const drawable *d, 
         const uint8_t region = (uint8_t)(f->windows ? (r << 4) : 0);
         const uint8_t rmask = f->windows ? 0x30 : 0x00;
         const bool alpha_blend = t1 && effects && (force_semi || f->mode == 1);
+        /* EVA 0 with EVB 1 means the layer contributes nothing (the DS shows
+         * the 2nd target or the backdrop): drawing it would only write the
+         * same pixels again, and skipping keeps the 2nd target intact. */
+        if (alpha_blend && !force_semi && f->eva <= 0.0f && f->evb >= 1.0f) {
+            continue;
+        }
         if (!alpha_blend) {
             const uint8_t flags = (uint8_t)((t2 ? 1 : 0) | (t1 && effects && f->mode >= 2 ? 2 : 0));
             blend_off();
@@ -747,19 +753,22 @@ static void draw_layer(const ctx *c, const fx *f, int layer, const drawable *d, 
 #endif
             continue;
         }
-        /* blended over 2nd targets */
-        blend_alpha(f->eva, f->evb);
-        C3D_StencilTest(true, GPU_EQUAL, region | 1u, rmask | 1u, 0x03);
-        C3D_StencilOp(GPU_STENCIL_KEEP, GPU_STENCIL_KEEP, t2 ? GPU_STENCIL_KEEP : GPU_STENCIL_INVERT);
+        /* Opaque where no 2nd target is below (bit 0 clear), then blended
+         * over the 2nd targets (bit 0 set). The order matters: the blended
+         * pass clears bit 0 for a layer that is not a 2nd target, so the
+         * opaque pass has to run first or it redraws over the blend. */
+        blend_off();
+        C3D_StencilTest(true, GPU_EQUAL, region, rmask | 1u, 0x01);
+        C3D_StencilOp(GPU_STENCIL_KEEP, GPU_STENCIL_KEEP, t2 ? GPU_STENCIL_INVERT : GPU_STENCIL_KEEP);
         if (edge != NULL) {
             draw_quads(edge);
         }
         draw_quads(d);
         draw_band(c, band);
-        /* opaque elsewhere */
-        blend_off();
-        C3D_StencilTest(true, GPU_EQUAL, region, rmask | 1u, 0x01);
-        C3D_StencilOp(GPU_STENCIL_KEEP, GPU_STENCIL_KEEP, t2 ? GPU_STENCIL_INVERT : GPU_STENCIL_KEEP);
+        /* blended over 2nd targets */
+        blend_alpha(f->eva, f->evb);
+        C3D_StencilTest(true, GPU_EQUAL, region | 1u, rmask | 1u, 0x03);
+        C3D_StencilOp(GPU_STENCIL_KEEP, GPU_STENCIL_KEEP, t2 ? GPU_STENCIL_KEEP : GPU_STENCIL_INVERT);
         if (edge != NULL) {
             draw_quads(edge);
         }
