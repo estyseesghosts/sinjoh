@@ -62,8 +62,8 @@ manual steps; the parts below are what changed since the second pass.
   (`build/game/3ds[-prof]`, `engine/compat/*/build/3ds[-prof]`), so switching
   cannot reuse the other's objects. `-All` builds both. The build ID is
   regenerated each build, rewritten only on change, and is a normal
-  prerequisite of the ARM11 objects, so an ID change relinks; release reports
-  `sinjoh-a8ffd5820dd9`, debug `sinjoh-a8ffd5820dd9-dbg` in their logs.
+  prerequisite of the ARM11 objects, so an ID change relinks; the current
+  build reports `sinjoh-ce48166959ec`, debug `sinjoh-ce48166959ec-dbg`.
 - **One-step packaging** (`465c25e`): `builder/prepare.py <rom> [--sd E:\]`
   checks the dump, extracts, writes and re-checks `platinum.pak`, copies the
   manifest, and stages the programs at `3ds/` with their data at
