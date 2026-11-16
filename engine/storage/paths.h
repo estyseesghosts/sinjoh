@@ -7,7 +7,7 @@
  * current working directory (kohjoh.md 4.2). */
 typedef struct kj_paths {
     bool bundled;              /* installed title: pack in RomFS, save in the title archive */
-    char root[96];             /* sdmc:/3ds/kohjoh */
+    char root[96];             /* sdmc:/3ds/sinjoh */
     char pack_file[128];
     char manifest_file[128];
     char save_file[128];
@@ -15,6 +15,8 @@ typedef struct kj_paths {
 } kj_paths;
 
 const kj_paths *kj_paths_init(void);
+/* The paths chosen by kj_paths_init, without repeating its setup. */
+const kj_paths *kj_paths_get(void);
 
 /* Open the save backend and attach it to the game's save chip. */
 bool kj_save_backend_init(const kj_paths *paths);

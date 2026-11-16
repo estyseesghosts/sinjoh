@@ -81,7 +81,7 @@ script does the whole job (check the dump, extract, pack, verify the pack, and
 stage the built programs beside it):
 
 ```sh
-python builder/prepare.py path/to/platinum.nds            # -> sinjoh-sd/3ds/kohjoh/
+python builder/prepare.py path/to/platinum.nds            # -> sinjoh-sd/3ds/
 python builder/prepare.py path/to/platinum.nds --sd E:\   # write to the card
 ```
 

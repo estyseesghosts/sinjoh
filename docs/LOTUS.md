@@ -50,9 +50,10 @@ by turns rather than truly simultaneously; that is the intended shared mode.
 Use different cards per project and per scratch run: `sinjoh`, `kohjoh`, and
 throw-away secondaries. A card's guest SD is
 `<lotus>/data/citnlo/sessions/cards/<card>/sdmc/`; sinjoh's `stage_card.py`
-fills the `sinjoh` card, and kohjoh needs the same copy into its own card
-(`.../cards/kohjoh/sdmc/3ds/kohjoh/`) from its pack. Both projects read
-`sdmc:/3ds/kohjoh/`, but separate cards keep them apart.
+fills the `sinjoh` card with `3ds/sinjoh-platinum*.3dsx` and `3ds/sinjoh/`,
+and kohjoh copies its own files into its card from its pack. The two projects
+also use different guest paths (`sdmc:/3ds/sinjoh` and `sdmc:/3ds/kohjoh`), so
+a card from one cannot feed the other.
 
 If the bridge exits, its sessions stop (a primary card keeps its data). Keep
 the bridge process alive for the whole working session; `ctl.py shutdown`
@@ -112,10 +113,11 @@ the session running until the client exits. The process owns the session, so
 the run ends when the client does.
 
 A primary card's guest SD is
-`<lotus>/data/citnlo/sessions/cards/<card>/sdmc/`; sinjoh reads the usual
-`sdmc:/3ds/kohjoh/` paths, so `stage_card.py` writes
-`.../cards/sinjoh/sdmc/3ds/kohjoh/`. A secondary session can copy that card for
-a disposable run, or start empty.
+`<lotus>/data/citnlo/sessions/cards/<card>/sdmc/`; sinjoh reads
+`sdmc:/3ds/sinjoh/`, so `stage_card.py` writes
+`.../cards/sinjoh/sdmc/3ds/sinjoh/` and the programs beside it at
+`.../sdmc/3ds/`. A secondary session can copy that card for a disposable run,
+or start empty.
 
 ## Tools used
 

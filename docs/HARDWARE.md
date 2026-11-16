@@ -9,13 +9,13 @@ contention, SD stalls, VRAM hazards, HOME/sleep, and the save chip.
 ## What goes on the SD card
 
 ```
-sdmc:/3ds/kohjoh/sinjoh-platinum.3dsx          release (no probes)
-sdmc:/3ds/kohjoh/sinjoh-platinum-dbg.3dsx      instrumented (perf lines)
-sdmc:/3ds/kohjoh/data/platinum.pak
-sdmc:/3ds/kohjoh/data/platinum.manifest.json
-sdmc:/3ds/kohjoh/saves/platinum.sav     (optional: your own dumped save)
-sdmc:/3ds/kohjoh/menu.txt               (optional: "off" for the classic lower screen)
-sdmc:/3ds/kohjoh/script.txt             (leave out: it drives inputs)
+sdmc:/3ds/sinjoh-platinum.3dsx          release (no probes)
+sdmc:/3ds/sinjoh-platinum-dbg.3dsx      instrumented (perf lines)
+sdmc:/3ds/sinjoh/data/platinum.pak
+sdmc:/3ds/sinjoh/data/platinum.manifest.json
+sdmc:/3ds/sinjoh/saves/platinum.sav     (optional: your own dumped save)
+sdmc:/3ds/sinjoh/menu.txt               (optional: "off" for the classic lower screen)
+sdmc:/3ds/sinjoh/script.txt             (leave out: it drives inputs)
 ```
 
 Both programs read the same `data/`, `saves/` and `logs/` directory, so they can
@@ -40,7 +40,7 @@ or without `--sd` it writes a `sinjoh-sd/` SD-card root to copy. On Windows,
 save or a capture may be committed, and the `.pak` must not be shared.
 
 Launch it from the HOME Menu's homebrew launcher. The app logs to
-`sdmc:/3ds/kohjoh/logs/platinum.log`; crashes write `logs/crash.txt`. Pull both
+`sdmc:/3ds/sinjoh/logs/platinum.log`; crashes write `logs/crash.txt`. Pull both
 off the card after the run.
 
 Before the run, confirm the emulator build has no `script.txt` staged, no

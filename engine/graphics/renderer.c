@@ -29,6 +29,7 @@
 #include "graphics/resources/atlas.h"
 #include "runtime/kj_bridge.h"
 #include "runtime/kj_g3.h"
+#include "storage/paths.h"
 
 #include <3ds.h>
 #include <citro3d.h>
@@ -321,9 +322,12 @@ void kj_ctr_publish_frame(const kj_frame_input *in)
 #endif
     /* Test directives: deterministic per-frame capture. */
     if (kj_script_dump(in->game_frame)) {
-        char path[96];
-        mkdir("sdmc:/3ds/kohjoh/dumps", 0777);
-        snprintf(path, sizeof(path), "sdmc:/3ds/kohjoh/dumps/f%05lu.kjd", (unsigned long)in->game_frame);
+        const kj_paths *paths = kj_paths_get();
+        char dir[112];
+        char path[128];
+        snprintf(dir, sizeof(dir), "%s/dumps", paths->root);
+        mkdir(dir, 0777);
+        snprintf(path, sizeof(path), "%s/f%05lu.kjd", dir, (unsigned long)in->game_frame);
         kj_dump_frame(path, in);
     }
     const uint32_t hold = kj_script_freeze(in->game_frame);

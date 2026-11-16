@@ -9,8 +9,9 @@ The ROM is only read, never modified, and nothing is uploaded. The script
 checks the dump, extracts its files to a temporary folder, writes
 platinum.pak and platinum.manifest.json, checks the pack back, and (when the
 builds exist) stages sinjoh-platinum.3dsx and sinjoh-platinum-dbg.3dsx beside
-them under 3ds/kohjoh/. The result is an SD-card root: copy its 3ds/ folder to
-the card's root, or pass --sd to write there directly.
+them. The result is an SD-card root: copy its 3ds/ folder to the card's root,
+or pass --sd to write there directly. The programs go to 3ds/ and the data to
+3ds/sinjoh/:
 
 The .pak contains your game's data: do not share it, and never commit a ROM,
 a pack, a save or extracted data.
@@ -31,8 +32,9 @@ import verify_rom  # noqa: E402
 
 EDITION = "platinum"
 BUILD_ID = pack.DEFAULT_BUILD_ID  # what the program checks at boot
-SD_ROOT = Path("3ds") / "kohjoh"
-SD_DATA_DIR = SD_ROOT / "data"
+APPS_DIR = Path("3ds")
+DATA_ROOT = APPS_DIR / "sinjoh"
+SD_DATA_DIR = DATA_ROOT / "data"
 APPS = (  # file name, build tree relative to the repo
     ("sinjoh-platinum.3dsx", Path("build") / "game" / "3ds"),
     ("sinjoh-platinum-dbg.3dsx", Path("build") / "game" / "3ds-prof"),
@@ -106,7 +108,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="your unmodified Platinum .nds; default: any .nds found")
     where = parser.add_mutually_exclusive_group()
     where.add_argument("--sd", type=Path, metavar="SD_ROOT",
-                       help="SD card root (e.g. E:\\); writes 3ds/kohjoh/ on it")
+                       help="SD card root (e.g. E:\\); writes 3ds/sinjoh-platinum*.3dsx and 3ds/sinjoh/ on it")
     where.add_argument("-o", "--output", type=Path, default=Path("sinjoh-sd"),
                        help="output SD-card root (default: sinjoh-sd)")
     parser.add_argument("--no-apps", action="store_true",
@@ -142,7 +144,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     if not args.no_apps:
         print("Staging the programs ...")
-        missing = stage_apps(root / SD_ROOT)
+        missing = stage_apps(root / APPS_DIR)
         if missing:
             print("  (not built yet: " + ", ".join(missing)
                   + "; run pwsh tools/build.ps1 -All)")

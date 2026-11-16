@@ -71,7 +71,7 @@ static void fatal_screen(const char *title, const char *detail)
     /* No game is running: a text console on the bottom screen is fine. */
     gfxInitDefault();
     consoleInit(GFX_BOTTOM, NULL);
-    printf("\x1b[1;1Hkohjoh\n\n%s\n\n%s\n\nPress START to exit.\n", title, detail != NULL ? detail : "");
+    printf("\x1b[1;1Hsinjoh\n\n%s\n\n%s\n\nPress START to exit.\n", title, detail != NULL ? detail : "");
     kj_log("[fatal] %s: %s", title, detail != NULL ? detail : "");
     kj_log_flush_now();
     while (aptMainLoop()) {
@@ -179,7 +179,7 @@ int main(int argc, char **argv)
     }
     bool is_new = false;
     APT_CheckNew3DS(&is_new);
-    kj_log("[app] kohjoh %s (%s), %s, %s", KJ_BUILD_ID, kj_ds_edition_name(),
+    kj_log("[app] sinjoh %s (%s), %s, %s", KJ_BUILD_ID, kj_ds_edition_name(),
            paths->bundled ? "installed title (RomFS pack)" : "homebrew (SD pack)",
            is_new ? "New 3DS hardware held at O3DS clock" : "Old 3DS");
 

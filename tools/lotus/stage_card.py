@@ -4,9 +4,12 @@
     python tools/lotus/stage_card.py --card sinjoh
     python tools/lotus/stage_card.py --card sinjoh --script tests/inputs/save_field.txt
 
-Copies build/sd-card/3ds/kohjoh (programs, data pack, manifest, save) into
+Copies build/sd-card/3ds (programs, data pack, manifest, save) into
 LOTUS's persistent card for `--card`, and optionally stages a script.txt so
 the run is deterministic. Run the windowed session with tools/lotus/run_sinjoh.py.
+
+The packaged SD tree is the card's own layout: <sdmc>/3ds/sinjoh-platinum*.3dsx
+and <sdmc>/3ds/sinjoh/{data,saves}. The script goes under 3ds/sinjoh/.
 """
 from __future__ import annotations
 
@@ -16,7 +19,7 @@ from pathlib import Path
 
 LOTUS = Path(r"C:\Users\terezi\workdir\LOTUS-v0.0.3-windows-x64")
 REPO = Path(__file__).resolve().parent.parent.parent
-SD_SOURCE = REPO / "build" / "sd-card" / "3ds" / "kohjoh"
+SD_SOURCE = REPO / "build" / "sd-card" / "3ds"
 
 
 def main() -> int:
@@ -24,14 +27,14 @@ def main() -> int:
     ap.add_argument("--card", required=True)
     ap.add_argument("--backend", default="citnlo")
     ap.add_argument("--script", type=Path,
-                    help="input script to stage as sdmc:/3ds/kohjoh/script.txt")
+                    help="input script to stage as sdmc:/3ds/sinjoh/script.txt")
     ap.add_argument("--keep-script", action="store_true",
                     help="leave an existing script.txt in place when none is given")
     a = ap.parse_args()
     if not SD_SOURCE.is_dir():
         raise SystemExit(f"missing {SD_SOURCE}; run builder/prepare.py first")
-    card = (LOTUS / "data" / a.backend / "sessions" / "cards" / a.card /
-            "sdmc" / "3ds" / "kohjoh")
+    sdmc = LOTUS / "data" / a.backend / "sessions" / "cards" / a.card / "sdmc"
+    card = sdmc / "3ds"
     card.mkdir(parents=True, exist_ok=True)
     for item in SD_SOURCE.iterdir():
         target = card / item.name
@@ -39,15 +42,15 @@ def main() -> int:
             shutil.copytree(item, target, dirs_exist_ok=True)
         else:
             shutil.copyfile(item, target)
-    script = card / "script.txt"
+    script = sdmc / "3ds" / "sinjoh" / "script.txt"
     if a.script is not None:
         shutil.copyfile(a.script, script)
         print(f"scripted: {a.script}")
     elif not a.keep_script:
         script.unlink(missing_ok=True)
     # Fresh logs make the last run's output unambiguous.
-    shutil.rmtree(card / "logs", ignore_errors=True)
-    print(f"card {a.card} -> {card}")
+    shutil.rmtree(sdmc / "3ds" / "sinjoh" / "logs", ignore_errors=True)
+    print(f"card {a.card} -> {sdmc / '3ds'}")
     print("run: python tools/lotus/run_sinjoh.py --card " + a.card)
     return 0
 

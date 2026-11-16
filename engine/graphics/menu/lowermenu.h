@@ -17,7 +17,7 @@
  * the game's layers use, so nothing is converted or uploaded per frame.
  */
 
-/* `root` is the program's data root (sdmc:/3ds/kohjoh). The layout is on;
+/* `root` is the program's data root (sdmc:/3ds/sinjoh). The layout is on;
  * <root>/menu.txt containing "off" disables it for comparison. The game
  * turns it on and off where the Poketch is the field's lower screen
  * (patches/pokeplatinum/0012), so nothing else shows it. */

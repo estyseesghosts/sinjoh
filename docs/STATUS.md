@@ -50,10 +50,11 @@ manual steps; the parts below are what changed since the second pass.
   a secondary copying it with `sinjoh-dbg`, running both, capturing both and
   stopping both in the same window. Calls serialize at the bridge, so parallel
   sessions advance in turn; `max_sessions` is 4.
-- **Cards, not roots.** Both sinjoh and kohjoh read `sdmc:/3ds/kohjoh`, so the
-  projects are separated by primary card (`.../sessions/cards/<card>/sdmc/`),
-  not by storage root. `tools/lotus/stage_card.py` copies the packaged SD tree
-  into a card and stages `script.txt` for deterministic input.
+- **Cards, not roots.** Each project has its own guest path: sinjoh reads
+  `sdmc:/3ds/sinjoh`, kohjoh reads `sdmc:/3ds/kohjoh`. LOTUS still gets one
+  primary card per project (`.../sessions/cards/<card>/sdmc/`), so a scratch
+  run cannot see the other's data. `tools/lotus/stage_card.py` copies the
+  packaged SD tree into a card and stages `script.txt` for deterministic input.
 - **Two build profiles side by side** (`f466037`, `b5f6077`, `466f698`): the
   release `sinjoh-platinum.3dsx` has no probes; `-Profile 1` writes
   `build/game/3ds-prof/sinjoh-platinum-dbg.3dsx` with `[perf]`/`[gpu]`/
@@ -65,12 +66,12 @@ manual steps; the parts below are what changed since the second pass.
   `sinjoh-a8ffd5820dd9`, debug `sinjoh-a8ffd5820dd9-dbg` in their logs.
 - **One-step packaging** (`465c25e`): `builder/prepare.py <rom> [--sd E:\]`
   checks the dump, extracts, writes and re-checks `platinum.pak`, copies the
-  manifest, and stages both programs as an SD-card root (`3ds/kohjoh/`).
-  `-o` (default `sinjoh-sd`) writes a tree; `builder/prepare.bat` is the
+  manifest, and stages the programs at `3ds/` with their data at
+  `3ds/sinjoh/`. `-o` (default `sinjoh-sd`) writes a tree; `builder/prepare.bat` is the
   drag-and-drop wrapper. Verified end to end on the user's Rev 1 dump: 340
   files, 95.5 MiB, pack 100,101,252 bytes.
-- **Ready-to-copy media.** `build/sd-card/3ds/kohjoh/` holds both 3DSX files,
-  `platinum.pak`, the manifest and the current save; `build/sinjoh-platinum-sd.zip`
+- **Ready-to-copy media.** `build/sd-card/3ds/` holds both 3DSX files beside
+  `sinjoh/{data,saves}`; `build/sinjoh-platinum-sd.zip`
   (54 MB) is the copyable archive. The same tree fills the LOTUS `sinjoh` card.
 - **First real-hardware procedure** (`43493b5`, `docs/HARDWARE.md`): boot,
   check the log and build ID, verify the title gradient, the wide bands, the
@@ -277,6 +278,10 @@ Both profiles are described in the third-pass section above; the packager is
 `builder/prepare.py`, with `builder/prepare.bat` as the Windows drag-and-drop
 wrapper. The build ID is regenerated each build, so an artifact names the
 commit it was really built from.
+
+The packaged card is `3ds/sinjoh-platinum.3dsx` and
+`3ds/sinjoh-platinum-dbg.3dsx` beside `3ds/sinjoh/{data,saves,logs}`. The
+program reads only `sdmc:/3ds/sinjoh`; nothing under a `kohjoh` path.
 
 ## Next
 

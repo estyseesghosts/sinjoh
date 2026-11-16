@@ -6,7 +6,7 @@
 
 /*
  * Scripted input and capture directives (test builds and Azahar runs).
- * File: sdmc:/3ds/kohjoh/script.txt. Lines:
+ * File: sdmc:/3ds/sinjoh/script.txt. Lines:
  *   every: N              each press lasts N V-blanks (default 10)
  *   <vblank> KEYS...      press KEYS (A B X Y L R START SELECT UP DOWN LEFT RIGHT,
  *                         or TOUCH:x,y in DS coordinates) at that V-blank; "-" = none
@@ -14,7 +14,7 @@
  *   freeze <frame> <sec>  after publishing game frame <frame>, hold it on
  *                         screen for <sec> seconds without running the game
  *   dump <frame>          write the DS state the renderer read for game frame
- *                         <frame> to sdmc:/3ds/kohjoh/dumps/f<frame>.kjd
+ *                         <frame> to sdmc:/3ds/sinjoh/dumps/f<frame>.kjd
  *   end: N                close at V-blank N
  *   debug: FLAGS          renderer experiment switches (KJ_DEBUG_* below)
  * Frame-indexed scripts make Azahar captures reproducible; V-blank indexing

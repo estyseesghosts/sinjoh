@@ -9,7 +9,7 @@ so the person watches the same session the harness drives. The process owns
 the session; when it exits the session stops (a primary card keeps its data).
 
 Captures are raw 32-bit BGRA from the worker; this writes them as PNG. The
-game's own sdmc:/3ds/kohjoh/script.txt still drives input, so stage a script
+game's own sdmc:/3ds/sinjoh/script.txt still drives input, so stage a script
 on the card for deterministic runs (the same files the Azahar harness uses).
 """
 from __future__ import annotations

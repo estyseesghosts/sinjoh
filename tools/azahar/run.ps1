@@ -1,4 +1,4 @@
-# run.ps1: stage kohjoh into Azahar's virtual SD card, launch it, take window
+# run.ps1: stage sinjoh into Azahar's virtual SD card, launch it, take window
 # screenshots at fixed times and collect the program's log.
 #
 # Azahar is an integration debugger, not a timing authority (kohjoh.md 1):
@@ -7,8 +7,8 @@
 #   pwsh tools/azahar/run.ps1 -Shots 8,15,25 -Tag boot
 #   pwsh tools/azahar/run.ps1 -Save path\to\heartgold.sav -Script tests\inputs\x.txt
 param(
-  [string]$Edition = "heartgold",
-  [string]$Artifact = "build/kj/pokeheartgold.3dsx",
+  [string]$Edition = "platinum",
+  [string]$Artifact = "build/game/3ds/sinjoh-platinum.3dsx",
   [string]$Pack = "",
   [string]$Manifest = "",
   [string]$Save = "",
@@ -55,7 +55,7 @@ if ((Test-Path -LiteralPath $config) -and
   throw "Disable custom storage in this emulator profile before staging; it can point to another instance's SD/NAND."
 }
 $sd = Join-Path $userRoot "sdmc\3ds"
-$root = Join-Path $sd "kohjoh"
+$root = Join-Path $sd "sinjoh"
 foreach ($d in @($root, "$root\data", "$root\saves", "$root\logs")) { New-Item -ItemType Directory -Force -Path $d | Out-Null }
 if ($Pack -ne "") { Copy-Item $Pack (Join-Path $root "data\$Edition.pak") -Force }
 if ($Manifest -ne "") { Copy-Item $Manifest (Join-Path $root "data\$Edition.manifest.json") -Force }
@@ -67,7 +67,7 @@ $log = Join-Path $root "logs\$Edition.log"
 
 $out = Join-Path $OutDir $Tag
 New-Item -ItemType Directory -Force -Path $out | Out-Null
-$dsx = Join-Path $sd "kohjoh.3dsx"
+$dsx = Join-Path $sd "sinjoh-platinum.3dsx"
 Copy-Item $Artifact $dsx -Force
 
 $logOffset = if (Test-Path $log) { (Get-Item $log).Length } else { 0 }

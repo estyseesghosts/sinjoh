@@ -1,8 +1,9 @@
 /*
  * paths.c: storage roots for the two installation formats.
  *
- * .3dsx: everything under sdmc:/3ds/kohjoh/ (data/<edition>.pak and its
- *        manifest, saves/, logs/).
+ * .3dsx: the program is sdmc:/3ds/sinjoh-platinum.3dsx; its data lives under
+ *        sdmc:/3ds/sinjoh/ (data/<edition>.pak and its manifest, saves/,
+ *        logs/).
  * .cia:  the pack is romfs:/data/game.pak (+ game.manifest.json); saves
  *        live in the title's save archive (storage/save_archive.c).
  */
@@ -37,7 +38,7 @@ const kj_paths *kj_paths_init(void)
 {
     const char *edition = kj_ds_edition_name();
 
-    snprintf(s_paths.root, sizeof(s_paths.root), "sdmc:/3ds/kohjoh");
+    snprintf(s_paths.root, sizeof(s_paths.root), "sdmc:/3ds/sinjoh");
     ensure_dir("sdmc:/3ds");
     ensure_dir(s_paths.root);
     {
@@ -65,5 +66,10 @@ const kj_paths *kj_paths_init(void)
     }
     snprintf(s_paths.save_file, sizeof(s_paths.save_file), "%s/saves/%s.sav", s_paths.root,
              edition);
+    return &s_paths;
+}
+
+const kj_paths *kj_paths_get(void)
+{
     return &s_paths;
 }

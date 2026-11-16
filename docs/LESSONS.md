@@ -175,19 +175,25 @@ shows the same sessions. Calls serialize, so parallel sessions advance in turn.
 **Transferable.** Treat the emulator supervisor as a service. One owner of the
 stdio, many clients, sessions addressed by ID.
 
-## Both ports read `sdmc:/3ds/kohjoh`
+## Sinjoh inherited its predecessor's SD path
 
-**Symptom.** Staging sinjoh's pack for LOTUS risked replacing kohjoh's data.
+**Symptom.** Sinjoh's first packaged builds wrote and read
+`sdmc:/3ds/kohjoh/`, because the storage module came from the older port and
+its root string came with it. On a card that also holds that port, both
+programs shared `data/`, `saves/` and `logs/`.
 
-**Cause.** Both ports use the same guest path; separate storage roots do not
-separate them, because both would still resolve `sdmc:/3ds/kohjoh`.
+**Cause.** A copied engine module carried a hardcoded product name. Two more
+literals in the renderer's dump path repeated it.
 
-**Fix.** One primary **card** per project (`cards/sinjoh`, `cards/kohjoh`),
-each with its own `sdmc/`. `tools/lotus/stage_card.py --card sinjoh` fills only
-sinjoh's card; kohjoh copies its own pack into `cards/kohjoh/sdmc/3ds/kohjoh/`.
+**Fix.** The root is `sdmc:/3ds/sinjoh` in `engine/storage/paths.c`; the
+programs are `sdmc:/3ds/sinjoh-platinum.3dsx` and
+`sdmc:/3ds/sinjoh-platinum-dbg.3dsx`; the renderer asks
+`kj_paths_get()` for the dump directory instead of repeating a literal. The
+packager stages the programs at `3ds/` and their data at `3ds/sinjoh/`.
 
-**Transferable.** Isolate by the guest's namespace (the card), not by the
-host's directory layout.
+**Transferable.** Rename the product's namespace as soon as an engine module
+is imported. A hardcoded path is a silent data-collision bug, and it only
+shows up when two products share a card.
 
 ## Screen capture through the desktop window
 
