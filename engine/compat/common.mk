@@ -54,6 +54,15 @@ PORT_CFLAGS := -std=gnu99 -fgnu89-inline -fno-strict-aliasing -fno-short-enums \
                -Wno-switch -Wno-multichar \
                $(PORT_DEFINES)
 
+# Instrumentation is opt-in (PROFILE=1). The release build carries no
+# svcGetSystemTick probe pairs: kohjoh measured them at ~390 ticks each and
+# once shipped a build whose "off" switch still left ~800 reads a frame
+# (kohjoh docs/lessons.md, "Uninstrumented builds still carried probes").
+PROFILE ?= 0
+ifeq ($(PROFILE),0)
+PORT_CFLAGS += -DHGSS_PROFILE_OFF
+endif
+
 # Not wl_arm7's headers: that's the ARM7's wireless library, which no ARM9
 # code uses, and its System.h and Font.h would stand in for the game's
 # system.h and font.h on Windows, where file names ignore case.

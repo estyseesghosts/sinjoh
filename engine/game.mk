@@ -298,6 +298,7 @@ $(BUILD_ID_H):
 
 ENGINE_CTR_CFLAGS := -std=gnu11 -O2 -g -Wall -Wno-unused-function \
                      -ffunction-sections -fdata-sections $(ARM_FLAGS) \
+                     $(if $(filter 0,$(PROFILE)),-DHGSS_PROFILE_OFF) \
                      -I$(DEVKITPRO)/libctru/include -I$(ROOT)/engine \
                      -I$(ROOT)/engine/runtime -I$(OUT)/gen
 
