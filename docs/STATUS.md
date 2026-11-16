@@ -21,8 +21,15 @@ facts; this file keeps them apart.
 
 ## Built
 
-- Nothing of sinjoh's own yet. The engine sources are imported, not compiled in
-  this tree.
+- `engine/compat/nitro` (libnitro.a) and `engine/compat/nitrosystem`
+  (libnitrosystem.a) for ARM11, from the pinned NitroSDK/NitroSystem
+  decompilations and their patch stacks.
+- The whole game: 1012 of 1012 game C sources, libcrypto/libgds/libspl, the
+  trainer AI script, the Wi-Fi stand-ins, the overlay table and overlay IDs.
+  `build/game/3ds/libplatinum_game.a` and `build/game/3ds/sinjoh.3dsx`
+  (about 4.9 MB) link.
+- A data pack from the user's own Rev 1 dump: 340 NitroFS files,
+  `build/platinum.pak` (about 100 MB). Never committed.
 
 ## Ran
 
@@ -30,6 +37,14 @@ facts; this file keeps them apart.
   session created, focused, loaded, 60 frames advanced, settings read and
   written, session stopped. The window displayed the focused session.
 - The bootstrap and source inventory both ran successfully on this machine.
+- sinjoh booted in Azahar 2126.2 with the O3DS profile (`is_new_3ds=false`,
+  CPU 100%, OpenGL renderer): renderer, save store and audio thread came up;
+  the overlays loaded; the copyright screen and the Game Freak intro drew on
+  both screens with music playing. Boot-to-intro took seconds, not minutes.
+- First measurement: with game patch 0011 absent the port only published on
+  the `PUBLISH_GRACE_VBLANKS` fallback (about 4-12 pictures a second) while
+  the game ticked normally. Patch 0011 is now applied; publish follows the
+  game's frame boundary.
 
 ## Verified facts
 

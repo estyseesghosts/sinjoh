@@ -1,0 +1,9 @@
+# Boot automation: title -> main menu -> continue.
+# Frames are DS V-blanks (about 60 a second).
+1500-1512 START
+1700-1712 A
+1900-1912 A
+2100-2112 A
+2300-2312 A
+# Let the field load, then stop so the log flushes its final profile.
+end: 3000
