@@ -9,7 +9,8 @@ contention, SD stalls, VRAM hazards, HOME/sleep, and the save chip.
 ## What goes on the SD card
 
 ```
-sdmc:/3ds/kohjoh.3dsx
+sdmc:/3ds/kohjoh/sinjoh-platinum.3dsx          release (no probes)
+sdmc:/3ds/kohjoh/sinjoh-platinum-dbg.3dsx      instrumented (perf lines)
 sdmc:/3ds/kohjoh/data/platinum.pak
 sdmc:/3ds/kohjoh/data/platinum.manifest.json
 sdmc:/3ds/kohjoh/saves/platinum.sav     (optional: your own dumped save)
@@ -17,10 +18,26 @@ sdmc:/3ds/kohjoh/menu.txt               (optional: "off" for the classic lower s
 sdmc:/3ds/kohjoh/script.txt             (leave out: it drives inputs)
 ```
 
-Build the `.3dsx` with `pwsh tools/build.ps1` (release; `-Profile 1` only for a
-measurement run). Build the pack from your own dump with
-`builder/extract_rom.py` and `builder/pack.py` as in `README.md`. Nothing from
-the ROM, a save or a capture may be committed.
+Both programs read the same `data/`, `saves/` and `logs/` directory, so they can
+sit side by side and share the pack and save. Run the release build for normal
+play. Run `-dbg` only to collect `[perf]`/`[gpu]`/`[pace]`/`[snd*]` lines; it
+logs to the same `logs/platinum.log` (the `[app]` line names the build and
+`-dbg`).
+
+Build the `.3dsx` files with `pwsh tools/build.ps1 -All`, or one at a time with
+`pwsh tools/build.ps1` (release) and `pwsh tools/build.ps1 -Profile 1` (debug).
+The two profiles have separate build trees, so switching never reuses objects
+compiled under the other's flags. Then stage the card with the one packaging
+script; it checks your dump, writes the pack, verifies it, and copies both
+built programs beside it:
+
+```
+python builder/prepare.py path/to/platinum.nds --sd E:\
+```
+
+or without `--sd` it writes a `sinjoh-sd/` SD-card root to copy. On Windows,
+`builder/prepare.bat` does the same by drag and drop. Nothing from the ROM, a
+save or a capture may be committed, and the `.pak` must not be shared.
 
 Launch it from the HOME Menu's homebrew launcher. The app logs to
 `sdmc:/3ds/kohjoh/logs/platinum.log`; crashes write `logs/crash.txt`. Pull both

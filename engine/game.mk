@@ -21,11 +21,11 @@ ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))..)
 include $(ROOT)/engine/compat/common.mk
 
 GAME := $(ROOT)/build/upstream
-OUT  := $(ROOT)/build/game/$(TARGET)
+OUT  := $(ROOT)/build/game/$(TARGET)$(BUILD_SUFFIX)
 LIB  := $(OUT)/libplatinum_game.a
 NNS_PORT := $(ROOT)/engine/compat/nitrosystem
-LIBNITRO := $(NITRO)/build/$(TARGET)/libnitro.a
-LIBNNS   := $(NNS_PORT)/build/$(TARGET)/libnitrosystem.a
+LIBNITRO := $(NITRO)/build/$(TARGET)$(BUILD_SUFFIX)/libnitro.a
+LIBNNS   := $(NNS_PORT)/build/$(TARGET)$(BUILD_SUFFIX)/libnitrosystem.a
 TOOLS    := $(ROOT)/tools/game
 
 ifeq ($(wildcard $(GAME)/include/pch/global_pch.h),)
@@ -175,7 +175,7 @@ GAME_CFLAGS := $(PORT_CFLAGS) $(SDK_INCLUDES) $(NNS_INCLUDES) \
                -ffunction-sections -fdata-sections \
                $(GCC14_ERRORS)
 
-.PHONY: all lib clean libnitro libnitrosystem
+.PHONY: all lib clean libnitro libnitrosystem libs
 
 ifeq ($(IS_HOST),yes)
 all: $(LIB)
@@ -185,25 +185,32 @@ endif
 
 lib: $(LIB)
 
+# One serial entry point for both libraries. A phony target is updated at
+# most once per make run, so parallel object rules cannot start two
+# recursive makes on the same tree (which raced on the ARM7 renamed objects
+# when the two profiles first had separate, empty trees).
+libs:
+	@$(MAKE) --no-print-directory -C $(NITRO) TARGET=$(TARGET) PROFILE=$(PROFILE) lib
+	@$(MAKE) --no-print-directory -C $(NNS_PORT) TARGET=$(TARGET) PROFILE=$(PROFILE) lib
+
 libnitro:
-	@$(MAKE) --no-print-directory -C $(NITRO) TARGET=$(TARGET) lib
+	@$(MAKE) --no-print-directory -C $(NITRO) TARGET=$(TARGET) PROFILE=$(PROFILE) lib
 
 libnitrosystem:
-	@$(MAKE) --no-print-directory -C $(NNS_PORT) TARGET=$(TARGET) lib
+	@$(MAKE) --no-print-directory -C $(NNS_PORT) TARGET=$(TARGET) PROFILE=$(PROFILE) lib
 
-$(LIBNITRO): libnitro
-$(LIBNNS): libnitrosystem
+$(LIBNITRO): | libs
+$(LIBNNS): | libs
 
-$(NNS_INLINE_SYMS): | libnitrosystem
-	@test -f $@
+$(NNS_INLINE_SYMS): | libs
 
-$(OUT)/src/%.o: $(GAME)/src/%.c $(NNS_INLINE_SYMS) $(GAME_GENERATED) | libnitrosystem
+$(OUT)/src/%.o: $(GAME)/src/%.c $(NNS_INLINE_SYMS) $(GAME_GENERATED) | libs
 	@mkdir -p $(dir $@)
 	@echo "  GAME CC $(notdir $<)"
 	@$(CC) $(GAME_CFLAGS) -c $< -o $@
 	@$(WEAKEN_NNS_INLINE)
 
-$(OUT)/lib/%.o: $(GAME)/lib/%.c $(NNS_INLINE_SYMS) $(GAME_GENERATED) | libnitrosystem
+$(OUT)/lib/%.o: $(GAME)/lib/%.c $(NNS_INLINE_SYMS) $(GAME_GENERATED) | libs
 	@mkdir -p $(dir $@)
 	@echo "  GAME CC lib/$*.c"
 	@$(CC) $(GAME_CFLAGS) -I$(dir $<) -c $< -o $@
@@ -304,8 +311,8 @@ BUILD_DIRTY := $(shell test -n "$$(git -C $(ROOT) status --porcelain 2>/dev/null
 
 $(BUILD_ID_H):
 	@mkdir -p $(dir $@)
-	@printf '/* Generated: the commit this program was built from. */\n#define HGSS_BUILD_ID "sinjoh-%s%s"\n#define HGSS_BUILD_SHA "%s"\n#define HGSS_BUILD_DIRTY %s\n' \
-	    '$(BUILD_SHA)' '$(if $(filter 1,$(BUILD_DIRTY)),-dirty,)' '$(BUILD_SHA)' '$(BUILD_DIRTY)' > $@
+	@printf '/* Generated: the commit this program was built from. */\n#define HGSS_BUILD_ID "sinjoh-%s%s%s"\n#define HGSS_BUILD_SHA "%s"\n#define HGSS_BUILD_DIRTY %s\n' \
+	    '$(BUILD_SHA)' '$(if $(filter 1,$(BUILD_DIRTY)),-dirty,)' '$(if $(filter 1,$(PROFILE)),-dbg,)' '$(BUILD_SHA)' '$(BUILD_DIRTY)' > $@
 
 ENGINE_CTR_CFLAGS := -std=gnu11 -O2 -g -Wall -Wno-unused-function \
                      -ffunction-sections -fdata-sections $(ARM_FLAGS) \
@@ -341,8 +348,9 @@ $(WIDEART_O): $(WIDEART_BIN)
 	@$(BIN2S) $(WIDEART_BIN) > $(WIDEART_S)
 	@$(ARM_AS) -o $@ $(WIDEART_S)
 
-PROGRAM_ELF := $(OUT)/sinjoh.elf
-PROGRAM := $(OUT)/sinjoh.3dsx
+PROGRAM_NAME := $(if $(filter 1,$(PROFILE)),sinjoh-platinum-dbg,sinjoh-platinum)
+PROGRAM_ELF := $(OUT)/$(PROGRAM_NAME).elf
+PROGRAM := $(OUT)/$(PROGRAM_NAME).3dsx
 
 $(PROGRAM_ELF): $(ENGINE_DS_OBJS) $(ENGINE_CTR_OBJS) $(SHADER_OBJS) $(WIDEART_O) \
                 $(OVERLAY_TABLE_C:.c=.o) $(GAME_HEADER_DEFS) $(WIFI_STUBS_O) $(LIBNITRO) $(LIBNNS)
@@ -359,7 +367,7 @@ $(PROGRAM_ELF): $(ENGINE_DS_OBJS) $(ENGINE_CTR_OBJS) $(SHADER_OBJS) $(WIDEART_O)
 	    -Wl,--start-group $(LIBNNS) $(LIBNITRO) -Wl,--end-group \
 	    $(OVERLAY_IDS) -lcitro3d -lctru -lm -o $@
 
-$(OUT)/gen/overlay_table.o: $(OVERLAY_TABLE_C) | libnitro
+$(OUT)/gen/overlay_table.o: $(OVERLAY_TABLE_C) | libs
 	@$(CC) $(PORT_CFLAGS) $(SDK_INCLUDES) -c $< -o $@
 
 program: $(PROGRAM)

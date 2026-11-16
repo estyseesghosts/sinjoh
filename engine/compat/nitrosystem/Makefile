@@ -14,7 +14,7 @@
 
 include ../common.mk
 
-OUT := build/$(TARGET)
+OUT := build/$(TARGET)$(BUILD_SUFFIX)
 
 ifeq ($(wildcard $(NNS)/include/nnsys.h),)
 $(error NitroSystem not found at $(NNS). Run: python tools/bootstrap.py)
@@ -72,7 +72,7 @@ NNS_SRCS := $(FND_SRCS:%=fnd/src/%) $(G2D_SRCS:%=g2d/src/%) \
 NNS_OBJS := $(NNS_SRCS:%.c=$(OUT)/nns/%.o)
 GEN      := $(OUT)/gen
 LIB      := $(OUT)/libnitrosystem.a
-LIBNITRO := $(NITRO)/build/$(TARGET)/libnitro.a
+LIBNITRO := $(NITRO)/build/$(TARGET)$(BUILD_SUFFIX)/libnitro.a
 
 # --- Flags -----------------------------------------------------------------
 
@@ -94,7 +94,7 @@ lib: $(LIB)
 # libnitro is built by its own Makefile (it also generates a header the
 # SDK includes, so it has to come first).
 libnitro:
-	@$(MAKE) --no-print-directory -C $(NITRO) TARGET=$(TARGET) lib
+	@$(MAKE) --no-print-directory -C $(NITRO) TARGET=$(TARGET) PROFILE=$(PROFILE) lib
 
 $(LIBNITRO): libnitro
 

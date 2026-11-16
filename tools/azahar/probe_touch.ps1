@@ -2,7 +2,7 @@
 # mouse, to prove whether the guest receives touch positions at all.
 # Screenshots stay in build/azahar/<Tag>/.
 param(
-  [string]$Artifact = "build/game/3ds/sinjoh.3dsx",
+  [string]$Artifact = "build/game/3ds/sinjoh-platinum.3dsx",
   [string]$Tag = "touchprobe",
   [int]$WaitSeconds = 70,
   [int]$Clicks = 12,

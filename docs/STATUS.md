@@ -78,7 +78,7 @@ Verified 2026-11-16, Old 3DS profile in Azahar 2126.2. "Implemented",
   patch stacks.
 - The whole game: 1012 of 1012 game C sources, libcrypto/libgds/libspl, the
   trainer AI script, the Wi-Fi stand-ins, the overlay table and overlay IDs.
-  `build/game/3ds/libplatinum_game.a` and `build/game/3ds/sinjoh.3dsx` link.
+  `build/game/3ds/libplatinum_game.a` and `build/game/3ds/sinjoh-platinum.3dsx` link.
 - A data pack from the user's own Rev 1 dump: 340 NitroFS files,
   `build/platinum.pak` (about 100 MB). Never committed.
 
@@ -181,11 +181,28 @@ Verified 2026-11-16, Old 3DS profile in Azahar 2126.2. "Implemented",
 1. 3D wide view: verify the enabled box test in a 3D field scene; the
    projection's clip x scaled by 0.8 and the top target's fixup mapping the
    DS's 256-pixel clip range across 400 px (320 DS px visible), gated on the
-   top screen; the reference's `NitroPort_Gx3dSetWideView(320)`.
-2. The start menu as the lower menu (reference patch 0032): the cursor is
-   the lower screen's buttons, its window and icons hidden, its task still
-   opening the apps. Built; exercise a tap on each usable button, the
-   cursor's wrap, and every app's return.
-3. Measure the worst-case scenes (outdoor routes, battle) the same way, then
-   a 10-minute steady run. The interior field has ~28 ms of headroom per
-   frame, so cost removal there is not justified by data.
+   top screen; the reference's `NitroPort_Gx3dSetWideView(320)`. The box test
+   is already widened in `engine/runtime/kj_g3.c`.
+2. The start menu as the lower menu (reference patch 0032): built; exercise a
+   tap on each usable button, the cursor's wrap, and every app's return.
+3. The panel's apps (reference 0033/0035/0036): the Town Map in the panel,
+   the bag and party tall layouts, panel fades and tabs, panel 3D, keep-shown
+   while an app runs, and the registered items' real icons. This is the
+   largest remaining remaster slice.
+4. Fog (`DISP3DCNT` bit 7): not drawn and counted as unsupported. The
+   reference maps the DS's 32-entry table and offset onto a PICA fog LUT
+   (`port_gx3d_pica.c` `fog_density`/`setup_fog`), which also needs the
+   scene's depth normalization. Weather and long routes are visibly clearer
+   than the DS until this exists.
+5. The colour grade on 3D textures (the remaster's `grade on`).
+6. Measure the worst-case scenes (outdoor routes, battle, rain) the same way
+   as the interior field, then a 10-minute steady run. The interior field has
+   ~28 ms of headroom per frame, so cost removal there is not justified by
+   data yet. Then a real-hardware pass with `docs/HARDWARE.md`.
+
+## Deliberately not planned (O3DS)
+
+Stereo 3D, 60 fps interpolation, 2x2 supersampling, sun shadows, edge
+marking, xBRZ, and the full-picture CPU 2D path. See
+`docs/planning/O3DS_TIER.md` section 3 and `docs/PORTING.md`.
+

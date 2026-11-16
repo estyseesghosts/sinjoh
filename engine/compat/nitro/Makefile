@@ -14,7 +14,7 @@
 
 include ../common.mk
 
-OUT      := build/$(TARGET)
+OUT      := build/$(TARGET)$(BUILD_SUFFIX)
 GEN      := $(OUT)/gen
 
 # --- Sources ---------------------------------------------------------------

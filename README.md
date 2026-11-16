@@ -63,24 +63,34 @@ Prerequisites: devkitPro (`devkitARM`, `libctru`, `citro3d`, `3dstools`,
 
 ```sh
 python tools/game/bootstrap.py        # pinned decomp + SDKs, apply patches
-make -f engine/game.mk TARGET=3ds program -j8
+pwsh tools/build.ps1                  # release:  build/game/3ds/sinjoh-platinum.3dsx
+pwsh tools/build.ps1 -Profile 1       # debug:    build/game/3ds-prof/sinjoh-platinum-dbg.3dsx
+pwsh tools/build.ps1 -All             # both, side by side
 ```
 
-The build writes `build/game/3ds/sinjoh.3dsx`. On Windows, run make from the
+The two profiles use separate build trees (`build/game/3ds` and
+`build/game/3ds-prof`, and likewise for `libnitro`/`libnitrosystem`), so a
+build never reuses objects compiled under the other profile's flags. The debug
+build turns on the `[perf]`/`[gpu]`/`[pace]`/`[snd*]` counters and nothing
+else; it is the one to use for measurements. On Windows, run make from the
 devkitPro MSYS2 shell with Git for Windows first on `PATH` (its own git can
 fetch over HTTPS; MSYS2's cannot).
 
-The data pack needs the player's own Platinum dump, never committed:
+The data pack needs the player's own Platinum dump, never committed. One
+script does the whole job (check the dump, extract, pack, verify the pack, and
+stage the built programs beside it):
 
 ```sh
-python builder/extract_rom.py path/to/platinum.nds --output build/data_pack
-python builder/pack.py build/data_pack -o build/platinum.pak --build-id platinum-nitrofs-1
+python builder/prepare.py path/to/platinum.nds            # -> sinjoh-sd/3ds/kohjoh/
+python builder/prepare.py path/to/platinum.nds --sd E:\   # write to the card
 ```
 
-Stage `build/platinum.pak` and `build/data_pack/manifest.json` as
-`sdmc:/3ds/kohjoh/data/platinum.pak` and `platinum.manifest.json`.
-`pwsh tools/azahar/run.ps1 -Edition platinum -Pack ... -Manifest ...` does
-that and collects screenshots and the log.
+On Windows, dragging the `.nds` onto `builder/prepare.bat` does the same. The
+result is an SD-card root; copy its `3ds` folder to the card's root. The
+`.pak` is your game's data: never commit or share it. For a single pack
+instead, `builder/extract_rom.py` and `builder/pack.py` still work on their
+own. `pwsh tools/azahar/run.ps1 -Edition platinum -Pack ... -Manifest ...`
+stages a pack for Azahar and collects screenshots and the log.
 
 ## Provenance and licence
 

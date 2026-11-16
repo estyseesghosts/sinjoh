@@ -58,8 +58,14 @@ PORT_CFLAGS := -std=gnu99 -fgnu89-inline -fno-strict-aliasing -fno-short-enums \
 # svcGetSystemTick probe pairs: kohjoh measured them at ~390 ticks each and
 # once shipped a build whose "off" switch still left ~800 reads a frame
 # (kohjoh docs/lessons.md, "Uninstrumented builds still carried probes").
+#
+# Both profiles are kept as separate build trees so switching between them
+# never leaves objects compiled under the other's flags. The suffix names
+# the instrumented (debug) tree; the release tree keeps the unsuffixed name.
 PROFILE ?= 0
-ifeq ($(PROFILE),0)
+ifeq ($(PROFILE),1)
+BUILD_SUFFIX := -prof
+else
 PORT_CFLAGS += -DHGSS_PROFILE_OFF
 endif
 
@@ -111,7 +117,7 @@ endif
 # header, and those files then can't be linked together. So after compiling,
 # mark them weak: the linker keeps one copy, as Metrowerks did. The list is
 # made by compiling every NitroSystem header (tools/nns_inline_symbols.py).
-NNS_INLINE_SYMS   := $(ROOT)/engine/compat/nitrosystem/build/$(TARGET)/gen/nns_inline.syms
+NNS_INLINE_SYMS   := $(ROOT)/engine/compat/nitrosystem/build/$(TARGET)$(BUILD_SUFFIX)/gen/nns_inline.syms
 WEAKEN_NNS_INLINE  = $(OBJCOPY) --weaken-symbols=$(NNS_INLINE_SYMS) $@
 
 # kohjoh: MSYS2 strips TMP/TEMP from the environment its children see, and a
