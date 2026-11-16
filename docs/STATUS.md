@@ -13,6 +13,10 @@ facts; this file keeps them apart.
   files; applies `patches/{pokeplatinum,NitroSDK,NitroSystem}` when present.
 - `tools/game/platinum_sources.py`: reads the decomp's meson `files()` lists
   and `platinum.us/main.lsf`, and maps every linker object to a source.
+- `tools/game/platinum_lsf.py`: rewrites the Meson-mangled linker spec into
+  checkout paths, and `tools/game/game_overlays.py` (kohjoh's, adapted to
+  ignore Platinum's per-overlay SDK archives) turns it into
+  `overlay_ids.ld`, `overlay_ids.h` and `overlay_table.c`.
 - Documentation: architecture, porting plan, LOTUS findings, this status.
 
 ## Built
@@ -34,6 +38,10 @@ facts; this file keeps them apart.
   sections (Static main, 2 autoloads, 122 overlays); 1012 mapped; the two
   unmapped entries are `libos.a` (a library line, not an object) and
   `trainer_ai_script.o` (generated from `src/battle/trainer_ai/script.s`).
+- Linker-spec normalization: 1012 objects rewritten to checkout paths, 2
+  generated/unknown kept, 64 library lines. The overlay tool accepts it and
+  emits 122 overlay IDs `dummy1`..`dw_warp` (0..121) plus the reset table
+  skeleton. Object section renaming waits for real objects.
 - LOTUS v0.0.2 pins every session to the `old3ds/software/...` profile and
   records `azahar_native_software`; its MCP `graphics_api` setting feeds the
   capture RPC, not the renderer, so it cannot select Vulkan. Evidence and
@@ -47,8 +55,9 @@ facts; this file keeps them apart.
 
 ## Next
 
-1. M1: emit `overlay.map`, `overlay_ids.ld` and `overlay_table.c` from the
-   inventory (adapt kohjoh's `game_overlays.py`).
-2. M2: write `patches/pokeplatinum` from the compiler/ABI work queue and port
+1. M2: write `patches/pokeplatinum` from the compiler/ABI work queue and port
    the NitroSDK/NitroSystem compat to the `kj_*` bridge.
+2. M2: name build objects `<source>.o` so the overlay tool can rename sections
+   when the objects exist; change `overlay_table.c`'s include to sinjoh's
+   overlay header.
 3. M3: build the data pack and boot 2D in LOTUS.

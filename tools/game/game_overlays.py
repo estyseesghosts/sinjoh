@@ -198,8 +198,11 @@ def overlay_objects(upstream: Path, overlays: list[dict], objdir: Path) -> dict[
                 raise ValueError(f"overlay {o['name']}: {entry['path']} is not an object")
             files.append(objdir / entry["path"])
         for library in o["libraries"]:
-            raise ValueError(f"overlay {o['name']}: unexpected Library {library!r} "
-                             f"(HGSS main.lsf uses Object entries only)")
+            # pokeplatinum's Wi-Fi overlays link SDK archives by name. They
+            # contribute no per-overlay data to rename; the port links the
+            # archives once, so they are not part of the reset table.
+            if library:
+                continue
         result[o["name"]] = files
     return result
 
