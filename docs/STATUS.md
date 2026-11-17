@@ -146,10 +146,17 @@ session, title/opening sequence, 600-frame windows.
   lookups fell from 65,328 to 14,784 per 600 frames at 20 s and from 36,096 to
   9,408 at 40 s; `g2d` p50 fell from 563 to 476 us and `publish` from 635 to
   527 us at 20 s.
-- **Not visually verified.** The host desktop locked during the pass and
-  LOTUS captures are white while it is locked (confirmed with a window grab
-  the previous pass). The counters are the evidence here; a visual pass on the
-  wide bands and screen edges is still owed.
+- **The cached art quads must be in GPU-visible memory.** The first version
+  allocated `edge`/`band` with `malloc`, unlike the layer's own quads
+  (`linearAlloc`). The PICA read stale memory, so the bands drew nothing and
+  the top target's white clear showed through: the copyright screen's side
+  bands were white in every frame that took the retained path, and correct in
+  frames that took the per-span path, which made it look intermittent. With
+  `linearAlloc` the bands are back, and the frame-172 capture is pixel-identical
+  to the pre-change build (`ImageChops` difference bbox empty). The same
+  frame now matches at 172 and 371 by pixel sampling.
+- A debug-only `[input]` line now logs the pad word whenever it changes, which
+  is how the LOTUS `lotus_input` bit mapping was checked.
 
 ## Implemented
 

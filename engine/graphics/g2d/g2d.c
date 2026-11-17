@@ -1514,10 +1514,10 @@ static bool text_bg_retained(const ctx *c, int bg, drawable *out, uint64_t *art_
 static bool art_alloc(layer_cache *lc)
 {
     if (lc->edge == NULL) {
-        lc->edge = malloc(EDGE_QUADS * 4u * sizeof(kj_v2d));
+        lc->edge = linearAlloc(EDGE_QUADS * 4u * sizeof(kj_v2d));
     }
     if (lc->band == NULL) {
-        lc->band = malloc(BAND_QUADS * 4u * sizeof(kj_v2d));
+        lc->band = linearAlloc(BAND_QUADS * 4u * sizeof(kj_v2d));
     }
     return lc->edge != NULL && lc->band != NULL;
 }

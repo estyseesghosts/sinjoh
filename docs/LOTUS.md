@@ -126,6 +126,13 @@ To drive a session by hand, stage with no `--script` (that deletes
 `script.txt`) and keep the save: `stage_card.py` copies the tree over the
 card and leaves `saves/` in place.
 
+`lotus_input`'s `buttons` is a bitmask in LOTUS's `NativeButton` order, not
+the DS or libctru order: A 1, B 2, X 4, Y 8, Up 16, Down 32, Left 64,
+Right 128, L 256, R 512, Start 1024, Select 2048 (Debug 4096, then ZL, ZR,
+Home, Power). So START is `0x400`, not `0x8`; sending `0x8` presses Y. The
+debug build logs `[input] pad xxxx` when the pad changes, which is the quick
+way to check a mapping.
+
 ## Tools used
 
 `lotus_status` (frontend, assets, cards), `lotus_create_session`

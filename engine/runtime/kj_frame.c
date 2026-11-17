@@ -153,6 +153,16 @@ void NitroPort_OnFrame(void)
     }
 
     input = kj_ctr_input();
+#ifndef HGSS_PROFILE_OFF
+    {
+        /* Input edges: the pad the game will see this V-blank. */
+        static uint16_t last_keys;
+        if (input->keys != last_keys) {
+            last_keys = input->keys;
+            NitroPort_Log("[input] pad %04x", (unsigned)input->keys);
+        }
+    }
+#endif
     NitroPort_SetButtons(input->keys, FALSE);
     NitroPort_SetTouch(input->touch ? TRUE : FALSE, input->touch_x, input->touch_y);
 
