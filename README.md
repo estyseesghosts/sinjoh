@@ -44,6 +44,28 @@ debuggers, not timing authorities; only counts of work removed transfer to the
 stock console. The field's framing, the 3D wide camera and the lower menu's
 apps are the open correctness items.
 
+## Install from a release
+
+This repository does not contain any game data. You need a 3DS with custom
+firmware (Luma3DS), the Homebrew Launcher, and your own unmodified Platinum
+`.nds`. Python 3.10+ is needed on your PC for one step.
+
+1. Download from the [latest release](../../releases/latest):
+   `sinjoh-platinum.3dsx` and `sinjoh-asset-tools.zip`.
+2. Copy the `.3dsx` to `sdmc:/3ds/`, keeping the name.
+3. Unzip `sinjoh-asset-tools.zip`. On Windows drag your `.nds` onto
+   `prepare.bat`; elsewhere run `python3 prepare.py your-game.nds`. It checks
+   the dump and writes `3ds/sinjoh/data/platinum.pak` and its manifest; add
+   `--sd E:\` to write straight to the card.
+4. Copy the produced `3ds/` folder to the card's root if you did not use
+   `--sd`, then launch **Sinjoh Platinum** from the Homebrew Launcher.
+5. Optional: install `sinjoh-platinum.cia` with FBI once for a HOME Menu
+   shortcut to that same `.3dsx`.
+
+Never share the `.pak` files: they contain your game's data. `sinjoh-platinum-dbg.3dsx`
+is the measurement build (perf counters on); it is slower and only useful for
+profiling.
+
 ## Layout
 
 ```

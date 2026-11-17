@@ -56,6 +56,19 @@ CENSUS_OBJS := $(GAME_OBJS)
 
 # --- generated headers -----------------------------------------------------
 
+# The SDK's fx constants header is generated, not checked in, and the nested
+# libnitro build does not create it on a clean tree: a fresh checkout, a
+# `-Clean` build or a CI run all died in <nitro/gx/g2_oam.h> until this rule
+# existed. Generate it from the CSV the SDK decomp ships, the same way the
+# SDK's own meson rule does.
+FX_CONST_CSV := $(SDK)/gen/nitro/fx/fx_const.csv
+FX_CONST_GEN := $(SDK)/gen/nitro/fx/gen_fx_const.py
+FX_CONST_H := $(SDK)/include/nitro/fx/fx_const.h
+
+$(FX_CONST_H): $(FX_CONST_CSV) $(FX_CONST_GEN)
+	@echo "  GEN nitro/fx/fx_const.h"
+	@python3 $(FX_CONST_GEN) $< $@
+
 CONSTANTS_DIR := $(ROOT)/build/game-constants
 CONSTANTS_STAMP := $(CONSTANTS_DIR)/.game-headers-ready
 GAME_MANIFESTS := $(wildcard $(GAME)/generated/*.txt)
@@ -189,14 +202,14 @@ lib: $(LIB)
 # most once per make run, so parallel object rules cannot start two
 # recursive makes on the same tree (which raced on the ARM7 renamed objects
 # when the two profiles first had separate, empty trees).
-libs:
+libs: $(FX_CONST_H)
 	@$(MAKE) --no-print-directory -C $(NITRO) TARGET=$(TARGET) PROFILE=$(PROFILE) lib
 	@$(MAKE) --no-print-directory -C $(NNS_PORT) TARGET=$(TARGET) PROFILE=$(PROFILE) lib
 
-libnitro:
+libnitro: $(FX_CONST_H)
 	@$(MAKE) --no-print-directory -C $(NITRO) TARGET=$(TARGET) PROFILE=$(PROFILE) lib
 
-libnitrosystem:
+libnitrosystem: $(FX_CONST_H)
 	@$(MAKE) --no-print-directory -C $(NNS_PORT) TARGET=$(TARGET) PROFILE=$(PROFILE) lib
 
 $(LIBNITRO): | libs
@@ -325,12 +338,12 @@ ENGINE_CTR_CFLAGS := -std=gnu11 -O2 -g -Wall -Wno-unused-function \
                      -I$(DEVKITPRO)/libctru/include -I$(ROOT)/engine \
                      -I$(ROOT)/engine/runtime -I$(OUT)/gen
 
-$(OUT)/ds/%.o: $(ROOT)/%.c
+$(OUT)/ds/%.o: $(ROOT)/%.c | $(FX_CONST_H)
 	@mkdir -p $(dir $@)
 	@echo "  DS  $(<:$(ROOT)/%=%)"
 	@$(CC) $(ENGINE_DS_CFLAGS) -MMD -MP -c $< -o $@
 
-$(OUT)/ctr/%.o: $(ROOT)/%.c $(BUILD_ID_H)
+$(OUT)/ctr/%.o: $(ROOT)/%.c $(BUILD_ID_H) | $(FX_CONST_H)
 	@mkdir -p $(dir $@)
 	@echo "  CTR $(<:$(ROOT)/%=%)"
 	@$(CC) $(ENGINE_CTR_CFLAGS) -MMD -MP -c $< -o $@

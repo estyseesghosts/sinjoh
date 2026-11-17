@@ -150,6 +150,14 @@ release logs `sinjoh-a8ffd5820dd9`, debug logs `sinjoh-a8ffd5820dd9-dbg`.
 **Transferable.** A generated header has two independent problems: generating
 it, and depending on it. An order-only dependency silently defeats the second.
 
+**Same bug, different header.** `nitro/fx/fx_const.h` is generated from the SDK
+decomp's CSV and is not checked in; nothing in the tree generated it on a fresh
+checkout, so a `-Clean` build died in `<nitro/gx/g2_oam.h>`, and so did the
+first CI run. Fixed with a real rule in `engine/game.mk` (`python3
+gen_fx_const.py <csv> <header>`) that `libs` and the engine objects depend on.
+Verified by deleting the header and building: `GEN nitro/fx/fx_const.h` then a
+clean link.
+
 ## `-All` died on a libnitro race
 
 **Symptom.** The first build that produced both profiles failed with two makes
