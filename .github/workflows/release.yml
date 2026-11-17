@@ -97,21 +97,32 @@ jobs:
             dist/sinjoh-platinum.cia
             dist/sinjoh-asset-tools.zip
           body: |
-            Native 3DS port of Pokemon Platinum for the original 3DS / 2DS (O3DS profile, stock clock).
+            native 3DS port of Pokemon Platinum for the original 3DS / 2DS (O3DS profile, stock clock).
 
-            **This release contains no game data.** You need your own Platinum `.nds`.
+            **this release contains no game data.** you need your own Platinum `.nds`.
 
-            ### Install
-            1. Copy `sinjoh-platinum.3dsx` to `sdmc:/3ds/` (keep the name).
-            2. Unzip `sinjoh-asset-tools.zip`. On Windows drag your `.nds` onto `prepare.bat`;
-               elsewhere run `python prepare.py your-game.nds`. It checks the dump and writes
-               the data pack; add `--sd E:\` to write straight to the card.
-            3. Copy the produced `3ds/sinjoh/` folder to your card's root (or use `--sd`).
-            4. Launch **Sinjoh Platinum** from the Homebrew Launcher.
-               `sinjoh-platinum.cia` is an optional Luma3DS HOME Menu shortcut that runs the
-               .3dsx from that exact path; install it once with FBI.
+            ## what you need
+            - a 3DS with custom firmware (Luma3DS) and the Homebrew Launcher
+            - your own unmodified USA dump of Pokemon Platinum as a `.nds`. nothing here contains game data and the `.pak` files you make are for your own use only, don't share them
+            - Python 3.10+ on your PC (only for the one-time data step)
 
-            `sinjoh-platinum-dbg.3dsx` is the measurement build (perf counters, `[probe]` slots).
-            It is slower and only useful for profiling.
+            ## setup
+            1. download `sinjoh-platinum.3dsx` and `sinjoh-asset-tools.zip`
+            2. copy the `.3dsx` into `/3ds/` on your SD card and **keep the filename**, e.g. `/3ds/sinjoh-platinum.3dsx`
+            3. unzip `sinjoh-asset-tools.zip` on your PC
+               - **windows:** drag your `.nds` onto `prepare.bat`
+               - **mac/linux:** `python prepare.py your-game.nds`
 
-            Never share the generated `.pak` files: they contain your game's data.
+               it checks your dump, then writes the data in a few seconds. the rom is only read, nothing is uploaded. add `--sd E:\` (your SD card's drive) and it writes straight to `3ds/` on the card and you can skip step 4
+            4. copy what's inside the produced `3ds/` folder (`sinjoh/data/platinum.pak` + `platinum.manifest.json`) to the root of the card; make the folders if they don't exist
+            5. launch sinjoh from the Homebrew Launcher
+
+            saves live on the SD card. if prepare says your dump isn't usable it prints which versions are supported (USA only, unmodified).
+
+            ## the CIA
+            `sinjoh-platinum.cia` is just a HOME menu shortcut (Luma3DS required). it does not contain the game: you still need the `.3dsx` at `/3ds/sinjoh-platinum.3dsx` and the data from step 4. install it once with FBI.
+
+            ## the dbg build
+            `sinjoh-platinum-dbg.3dsx` is the measurement build (perf counters, `[probe]` slots). it is slower and only useful for profiling.
+
+            problems or questions: https://discord.gg/wJNprjYCun
