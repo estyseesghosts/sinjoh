@@ -281,3 +281,70 @@ plausible answer for a hot-path question, so the failure is silent. Check the
 symbol exists in the ELF before believing a zero counter, and measure the
 ported optimization in the target game before claiming the source game's
 number.
+
+## Two builds at once measure a binary that exists in no tree
+
+**Symptom.** Field probe runs printed impossible splits: slot 0 (the whole
+field update) 2408 us, slots 1 and 3 missing entirely, slots 8-10 present with
+`0 us`, all in the same window that reported 15,520 3D draws. A later run of
+the same source gave a complete, consistent split.
+
+**Cause.** Two builds were running against the same trees. A `-All` started
+while a `-Profile 1` build was still going, and both write
+`build/game/3ds-prof/...`; the linked binary took `kj_frame.o` from one build
+and `renderer.o` from the other. `KJ_PROBE_SLOTS` had changed from 6 to 11
+between them, so the two halves disagreed about `kj_ds_profile`'s layout: the
+engine wrote six slots at one offset and the renderer read eleven at another.
+The object timestamps showed it (`kj_frame.o` older than the header edit while
+`renderer.o` was newer).
+
+**Fix.** Kill the stale build, check the object timestamps, and measure from a
+clean build (`tools/build.ps1 -All -Clean`). The probe facility itself was
+correct; the binary was not.
+
+**Transferable.** When one number in a window contradicts another (0 us for a
+slot that must have run, or an absent slot next to a huge draw count), suspect
+the binary before the code. A partial rebuild that does not agree on a struct
+in a shared header produces readings no single source tree can produce.
+
+
+## A batch merge that joins nothing must be counted, then deleted
+
+**Symptom.** Joining contiguous same-state 3D batches into one
+`C3D_DrawElements` is the textbook lever for a PICA200 port: a separate draw
+costs ~9.7 us of CPU, and the DS splits meshes into small strips. Applied to
+Platinum's field it changed nothing: `3D batches 15560 draws 15560`.
+
+**Cause.** The key required byte-identical state *and* an identical matrix
+palette. Counters added for one run answered it in one line:
+`merge joined 0 (blocked state 15093 matrices 0)`. Every consecutive batch in
+the field is a different material (different `poly_attr`/`tex_param`), so the
+key can never match, in the field or in the title scene (0 joins there too).
+The DS batch is a *material*, not a strip of one material.
+
+**Fix.** Removed the merge. Kept the redundant-state filter, which that same
+run counted at 38,511 skipped `C3D_*` setters per 600 frames (82% of them) and
+which is where the g3d win actually came from.
+
+**Transferable.** A merge/batch optimization is not real until its join count
+is printed and non-zero. Counter the *reason* it would decline (state vs
+matrices vs index contiguity), measure once, and delete the code when the
+answer is zero; otherwise it ships as an unmeasured memcmp per batch.
+
+## Reverting a restructured loop means restoring its header too
+
+**Symptom.** After removing the merge, reading the function showed
+`for (uint32_t i = 0; i < f->batch_count; )` with the draw at the end and no
+`++i`: a frame with any batch would have hung in `draw_pass`.
+
+**Cause.** The merge had restructured the loop (`i = j` at the end, explicit
+`++i` before each `continue`). Deleting the merge body and the trailing
+assignment left the header, and the `continue` paths, in the merged shape.
+Nothing warns: it compiles, and the `continue`s still increment.
+
+**Fix.** Restored `++i` in the header and plain `continue`s, then rebuilt and
+re-ran (g3d 832 us, captures pixel-identical to the pre-change baseline).
+
+**Transferable.** When an optimization changes control flow, the revert is a
+control-flow change too. Diff the loop header, not just the body, and re-run
+the same capture comparison rather than trusting the absence of a crash.

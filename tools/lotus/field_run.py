@@ -91,7 +91,10 @@ def main() -> int:
     if not sid and "already has a primary session" in json.dumps(created):
         # A stopped session still owns its card until it is stopped; a previous
         # field run leaves one behind.
-        for s in call(port, "lotus_list_sessions", {}).get("sessions", []):
+        sessions = call(port, "lotus_list_sessions", {})
+        if isinstance(sessions, dict):
+            sessions = sessions.get("sessions", [])
+        for s in sessions:
             if s.get("card") == a.card:
                 call(port, "lotus_control", {"session": s["id"], "operation": "stop"})
         created = call(port, "lotus_create_session",

@@ -120,6 +120,55 @@ in `docs/LESSONS.md`. The short version:
   bedroom's rival encounter invalidated the outdoor walk schedule; the run was
   killed and the wide 3D left marked unverified rather than claimed.
 
+## 2026-11-16 sixth pass: per-batch 3D state, and the main loop attributed
+
+Same harness and session (Snowpoint City, standing), windows at pictures
+4201-4800, three consecutive windows, both profiles rebuilt from one source.
+
+- **The field re-sent cull, depth and blend on every batch.** Consecutive DS
+  batches in the field mostly repeat them, and citro3d writes the changed state
+  at draw time (coffeepot `PICA200/gpu-rendering.md`, "What a draw call costs":
+  each state change is 1-2 us on top of a ~9.7 us draw). Skipping a setter when
+  its value is already set (`state skips`) removed **38,511 of 46,680** setter
+  calls in a 600-frame window (26 draws/frame x 3 setters = 78 per frame, 63.9
+  skipped): g3d p50 **972 -> 832 us**, publish **2015 -> 1876 us**. Draws,
+  palette uploads and lighting uploads are unchanged (15,560 draws, 10,503
+  palettes / 12,059 matrices, 9,336 lighting, 0 shininess), and captures at both
+  ends are pixel-identical. The caches are sentinelled (`0xFFFFFFFF`) and reset
+  at the frame's program bind, so the first batch of a frame is unconditional.
+- **The shininess table split is right but free here.** The 32 uniform words
+  are only re-sent when the table actually changes, counted as
+  `shininess uploads`: **0 in the field**, which means the field never uses the
+  specular table at all. Kept because battle and menu scenes can.
+- **An adjacency batch merge was tried and removed.** Joining contiguous
+  same-state batches into one `C3D_DrawElements` (the obvious lever, since each
+  draw is ~9.7 us) joined **zero** batches in the field and zero in the title
+  scene: `merge joined 0`, and the block was always the material, not the
+  matrix palette (`blocked state 15,093`, `matrices 0`). Every consecutive batch
+  is a different material, so no adjacency key can ever match. Joining draws
+  here needs a union palette plus an index remap and a state-sorted draw order,
+  which is a different (and larger) change.
+- **The main loop is now attributed.** The earlier "~1.9 ms of logic outside
+  the field update" was an artifact of the mixed binary; from one clean build
+  (`NitroPort_ProbeNow` slots in `main.c` and `field_system.c`):
+
+  | probe | covers | us per game frame |
+  |---|---|---|
+  | slot 0 | whole `HandleInputsEventsAndProcesses` | 2419 |
+  | slot 1 | `HandleFieldInput` | 236 |
+  | slot 2 | `FieldTask_Run` + Poketch event | 47 |
+  | slot 3 | `ApplicationManager_Exec` of `gFieldMapTemplate` | 2132 |
+  | slot 4 | `CommSys_Update` + `RunApplication` + main/print tasks | 2576 |
+  | slot 5 | RTC, playtime, `sub_020241CC` (G3 swap), print tasks | 5 |
+  | slot 6 | post-V-blank: brightness, fade, vblank cb, sound, post tasks | 67 |
+
+  The map app is 2132 of the 2419 us field update and 50% of the 4299 us logic.
+  Everything the main loop does around it is ~230 us; the one part still not in
+  a window is ~1.6 ms of timer/frame-pacing overhead around the probes, which
+  `[pace]` and `[gamecpu]` cover rather than the probes. The probe slots were
+  removed from the game sources after this reading (they are a debug build
+  facility, not part of the game).
+
 ## 2026-11-16 fifth pass: the field, its profile, and the Pokemon cipher
 
 The field is now reachable without hand-driving the pad and has a measured
@@ -166,6 +215,19 @@ lighter scene; the shape (publish ~g2d+g3d+submit, H-blank ~0.5 ms) matches.
   patch and the engine references it weakly. A zero from an unreferenced weak
   symbol is not a measurement; `nm` on the ELF (`EncodeData_TakeStats` present)
   is what separates the two cases.
+- **The field update is the map app, not input or field tasks.** A debug probe
+  of `HandleInputsEventsAndProcesses` (`field_system.c`, `NitroPort_ProbeNow`,
+  debug build `sinjoh-c9488f040ac2-dbg` plus the probe patch) put 2413 us of
+  the 4308 us logic into that one call: `HandleFieldInput` 239 us,
+  `FieldTask_Run` + the Poketch event 48 us, and `ApplicationManager_Exec` of
+  the process-manager parent/child 2122 us. The parent is
+  `&gFieldMapTemplate` (`field_system.c:118`, `overlay005/fieldmap.c`), so the
+  overworld update itself — player, objects, map, G3 submission — is the cost;
+  the input and task-list paths are noise. kohjoh sees the same shape (its
+  Goldenrod logic is dominated by its field app). That reading came from a
+  mixed binary and put the rest of the loop at ~1.9 ms; the sixth pass's clean
+  build corrected it: everything outside the field update is ~230 us, and the
+  field update is 2419 of 4299 us logic.
 - **One frame can be dumped on demand from a live session.** Dropping
   `sdmc:/3ds/sinjoh/dump.now` on the card makes the debug build write
   `sdmc:/3ds/sinjoh/dumps/fNNNNN.kjd` at the next 30-picture boundary
@@ -461,12 +523,14 @@ create, run, capture and stop sessions. Both build profiles can run at once.
    DS state against a DS emulator's own picture of the same save. The offline
    2D and 3D oracles agree with the port on the sub-rectangle, so the next
    question is whether the *state* is right, not the GPU path.
-8. After that, the field's remaining costs in order (fifth pass): game logic
-   ~3.9 ms (needs attribution; the cipher was 168 calls/frame and is now
-   cached), H-blank walk 566 us, g3d 971 us for 40 batches of ~22 triangles
-   (per-batch palette `memcmp`/upload and TEV/cull state are the suspects), and
-   the ~250 us of publish outside its stages. Nothing is near the 33 ms frame
-   budget yet, so prefer measured work removal over restructuring.
+8. After that, the field's remaining costs in order (sixth pass): the map app
+   itself ~2.1 ms (player, objects, map, G3 submission — the single biggest
+   block; nothing inside it is split yet), H-blank walk ~366 us, g3d 832 us for
+   26 batches of ~22 triangles (palette uploads and TEV/texture state per
+   batch; a union-palette draw join is the only way to cut the draw count),
+   g2d 501 us, and the ~250 us of publish outside its stages. Nothing is near
+   the 33 ms frame budget yet, so prefer measured work removal over
+   restructuring.
 
 ## Deliberately not planned (O3DS)
 

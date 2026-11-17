@@ -35,6 +35,15 @@ int NitroPort_Unimplemented(const char *what);
 /* Has `what` been reported? (For tests.) */
 BOOL NitroPort_WasReported(const char *what);
 
+/* Time one game-side step for the debug profile. Take `t0` with
+ * NitroPort_ProbeNow() before the step and call NitroPort_NoteProbeSince()
+ * after it; the profile prints each slot's cost per game frame. Up to
+ * KJ_PROBE_SLOTS slots. The caller should compile its probing out of release
+ * builds (HGSS_PROFILE_OFF): the counters here are cheap, the tick reads are
+ * not. (Not OS_GetTick: that syncs the DS timers and costs far more.) */
+u64 NitroPort_ProbeNow(void);
+void NitroPort_NoteProbeSince(unsigned slot, u64 t0);
+
 /* ---------------------------------------------------------------- the CPU */
 
 /* The DS CPU's status register, as far as the SDK cares: the mode bits and

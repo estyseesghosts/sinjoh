@@ -21,6 +21,12 @@ typedef struct kj_g3d_stats {
     uint32_t tex_uploads, tex_bytes_compared, tex_cache_full;
     uint32_t unsupported;
     uint32_t box_tests, box_culled, box_culled_far;
+    /* Per-batch state cost: how often the two 3D programs swap, and how many
+     * clip-matrix palettes and lighting sets are re-uploaded. */
+    uint32_t program_switches, palette_uploads, palette_matrices;
+    uint32_t lighting_uploads, shininess_uploads;
+    /* C3D_* cull/depth/blend calls skipped because the state was unchanged. */
+    uint32_t state_skips;
 } kj_g3d_stats;
 
 void kj_g3d_take_stats(kj_g3d_stats *out);

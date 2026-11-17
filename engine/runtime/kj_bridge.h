@@ -216,6 +216,8 @@ typedef struct kj_input {
 const kj_input *kj_ctr_input(void);
 
 /* DS-side profile since the last call (ARM11 ticks / counts). */
+#define KJ_PROBE_SLOTS 11
+
 typedef struct kj_ds_profile {
     uint64_t g3_fifo_ticks;
     uint32_t g3_fifo_words, g3_direct_words, g3_commands;
@@ -228,6 +230,10 @@ typedef struct kj_ds_profile {
     /* The game's Pokemon data cipher (EncodeData) since the last call: how
      * often the field decrypts or re-encrypts a mon. Debug builds only. */
     uint32_t mon_encode_calls, mon_encode_bytes;
+    /* Game-side probes (NitroPort_NoteProbe). Slot names are the caller's;
+     * the debug log prints the per-game-frame cost of each. */
+    uint64_t probe_ticks[KJ_PROBE_SLOTS];
+    uint64_t probe_calls[KJ_PROBE_SLOTS];
 } kj_ds_profile;
 
 void kj_ds_take_profile(kj_ds_profile *out);

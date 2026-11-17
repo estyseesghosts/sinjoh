@@ -49,6 +49,16 @@ static uint32_t s_last_pal_vp;
 static kj_program_id s_draw_program;
 static const kj_lighting *s_last_lighting;
 static uint32_t s_last_alpha;
+/* The specular table changes far less often than the per-object lighting;
+ * re-sending its 32 entries on every lighting change is the bulk of the
+ * upload. Reset with the program bind. */
+static uint32_t s_last_shininess[32];
+static bool s_shininess_valid;
+/* The DS batches repeat culling/depth/blend state; each C3D_* setter dirties
+ * the effect block and re-emits its 14 commands at draw time. */
+static uint32_t s_last_cull;
+static uint32_t s_last_depth;
+static uint32_t s_last_blend;
 
 bool kj_g3d_init(void)
 {
@@ -134,6 +144,10 @@ static void make_fixup(const kj_target *t, uint32_t vp, bool wbuffer, float f[4]
 static void upload_palette(const kj_g3_batch *b, float fix[4][4])
 {
     const int loc = kj_gpu_uloc_3d_palette();
+#ifndef HGSS_PROFILE_OFF
+    ++s_stats.palette_uploads;
+    s_stats.palette_matrices += b->matrix_count;
+#endif
     for (unsigned i = 0; i < b->matrix_count; ++i) {
         const kj_g3_matrix *m = &s_frame->matrices[b->first_matrix + i];
         C3D_FVec *rows = C3D_FVUnifWritePtr(GPU_VERTEX_SHADER, loc + (int)i * 4, 4);
@@ -159,6 +173,9 @@ static void upload_lighting(const kj_g3_batch *b)
     const kj_lighting *light = &s_frame->lighting[b->flags >> 16];
     const uint32_t alpha = (b->poly_attr >> 16) & 31u;
     if (light != s_last_lighting) {
+#ifndef HGSS_PROFILE_OFF
+        ++s_stats.lighting_uploads;
+#endif
         for (unsigned i = 0; i < 4; ++i) {
             int32_t dir_hi[3], dir_lo[3], half_hi[3], half_lo[3];
             for (unsigned c = 0; c < 3; ++c) {
@@ -191,12 +208,19 @@ static void upload_lighting(const kj_g3_batch *b)
         }
         C3D_FVUnifSet(GPU_VERTEX_SHADER, u->emission,
                       light->emission[0], light->emission[1], light->emission[2], 0);
-        if (light->use_shininess) {
+        if (light->use_shininess &&
+            (!s_shininess_valid || memcmp(s_last_shininess, light->shininess,
+                                          sizeof(s_last_shininess)) != 0)) {
+#ifndef HGSS_PROFILE_OFF
+            ++s_stats.shininess_uploads;
+#endif
             for (unsigned i = 0; i < 32; ++i) {
                 const uint32_t word = light->shininess[i];
                 C3D_FVUnifSet(GPU_VERTEX_SHADER, u->shininess + i,
                               word & 255u, word >> 8 & 255u, word >> 16 & 255u, word >> 24);
             }
+            memcpy(s_last_shininess, light->shininess, sizeof(s_last_shininess));
+            s_shininess_valid = true;
         }
     }
     if (light != s_last_lighting || alpha != s_last_alpha) {
@@ -272,6 +296,10 @@ static void draw_pass(const kj_target *target, bool translucent_pass, uint32_t d
             s_last_pal = NULL;
             s_last_tex = NULL;
             s_last_lighting = NULL;
+            s_shininess_valid = false;
+#ifndef HGSS_PROFILE_OFF
+            ++s_stats.program_switches;
+#endif
         }
         if (program == KJ_PROGRAM_3D_LIT) {
             upload_lighting(b);
@@ -312,10 +340,18 @@ static void draw_pass(const kj_target *target, bool translucent_pass, uint32_t d
 
         /* culling: bit 6 render back, bit 7 render front; 0 draws both */
         const unsigned faces = (b->poly_attr >> 6) & 3u;
-        C3D_CullFace((dbg & KJ_DEBUG_NO_CULL) ? GPU_CULL_NONE
-                     : faces == 2u                ? GPU_CULL_BACK_CCW
-                     : faces == 1u                ? GPU_CULL_FRONT_CCW
-                                                  : GPU_CULL_NONE);
+        const uint32_t cull = (dbg & KJ_DEBUG_NO_CULL) ? GPU_CULL_NONE
+                              : faces == 2u                ? GPU_CULL_BACK_CCW
+                              : faces == 1u                ? GPU_CULL_FRONT_CCW
+                                                           : GPU_CULL_NONE;
+        if (cull != s_last_cull) {
+            C3D_CullFace(cull);
+            s_last_cull = cull;
+        } else {
+#ifndef HGSS_PROFILE_OFF
+            ++s_stats.state_skips;
+#endif
+        }
 
         /* depth */
         const bool depth_equal = (b->poly_attr >> 14) & 1u;
@@ -329,14 +365,36 @@ static void draw_pass(const kj_target *target, bool translucent_pass, uint32_t d
         if (dbg & KJ_DEBUG_NO_DEPTH) {
             func = GPU_ALWAYS;
         }
-        C3D_DepthTest(true, func,
-                      depth_write ? GPU_WRITE_ALL : GPU_WRITE_COLOR);
+        const uint32_t depth = ((uint32_t)func << 4) |
+                               (depth_write ? GPU_WRITE_ALL : GPU_WRITE_COLOR);
+        if (depth != s_last_depth) {
+            C3D_DepthTest(true, func, depth_write ? GPU_WRITE_ALL : GPU_WRITE_COLOR);
+            s_last_depth = depth;
+        } else {
+#ifndef HGSS_PROFILE_OFF
+            ++s_stats.state_skips;
+#endif
+        }
 
         if (translucent && (disp3dcnt & 8u) && !(dbg & KJ_DEBUG_NO_BLEND)) {
-            C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, GPU_SRC_ALPHA, GPU_ONE_MINUS_SRC_ALPHA,
-                           GPU_SRC_ALPHA, GPU_ONE_MINUS_SRC_ALPHA);
+            const uint32_t blend = (GPU_SRC_ALPHA << 16) | (GPU_ONE_MINUS_SRC_ALPHA << 20) |
+                                   (GPU_SRC_ALPHA << 24) | (GPU_ONE_MINUS_SRC_ALPHA << 28);
+            if (blend != s_last_blend) {
+                C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, GPU_SRC_ALPHA, GPU_ONE_MINUS_SRC_ALPHA,
+                               GPU_SRC_ALPHA, GPU_ONE_MINUS_SRC_ALPHA);
+                s_last_blend = blend;
+            } else {
+#ifndef HGSS_PROFILE_OFF
+                ++s_stats.state_skips;
+#endif
+            }
         } else {
-            C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, GPU_ONE, GPU_ZERO, GPU_ONE, GPU_ZERO);
+            const uint32_t blend = (GPU_ONE << 16) | (GPU_ZERO << 20) |
+                                   (GPU_ONE << 24) | (GPU_ZERO << 28);
+            if (blend != s_last_blend) {
+                C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, GPU_ONE, GPU_ZERO, GPU_ONE, GPU_ZERO);
+                s_last_blend = blend;
+            }
         }
         (void)stencil_flags;
         C3D_DrawElements(GPU_TRIANGLES, (int)b->index_count, C3D_UNSIGNED_SHORT,
@@ -393,6 +451,9 @@ void kj_g3d_draw(const kj_target *target, bool wide, uint8_t stencil_flags)
     s_last_tev = -1;
     s_last_tex = NULL;
     s_last_pal = NULL;
+    s_last_cull = 0xFFFFFFFFu;
+    s_last_depth = 0xFFFFFFFFu;
+    s_last_blend = 0xFFFFFFFFu;
     C3D_BufInfo *bi = C3D_GetBufInfo();
     BufInfo_Init(bi);
     BufInfo_Add(bi, f->verts, sizeof(kj_g3_vertex), 4, 0x2130);

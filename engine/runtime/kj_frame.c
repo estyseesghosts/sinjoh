@@ -39,6 +39,26 @@ static u64 s_pump_ticks, s_hblank_ticks;
 static u32 s_pump_calls, s_hblank_walks;
 static u64 s_sync_calls_base, s_sync_ticks_base;
 
+/* Game-side probes: the game times one top-level step and reports the tick
+ * delta; the profile prints the total per game frame. Consecutive slots are
+ * meant to be siblings (a step and its children) so the difference is the
+ * step's own cost. */
+static u64 s_probe_ticks[KJ_PROBE_SLOTS];
+static u64 s_probe_calls[KJ_PROBE_SLOTS];
+
+u64 NitroPort_ProbeNow(void)
+{
+    return svcGetSystemTick();
+}
+
+void NitroPort_NoteProbeSince(unsigned slot, u64 t0)
+{
+    if (slot < KJ_PROBE_SLOTS) {
+        s_probe_ticks[slot] += svcGetSystemTick() - t0;
+        ++s_probe_calls[slot];
+    }
+}
+
 /* V-blanks without a publish after which the V-blank publishes itself. Two
  * is the main loop's normal cadence; four leaves room for a frame that
  * overran once. */
@@ -214,6 +234,12 @@ void kj_ds_take_profile(kj_ds_profile *out)
     out->hblank_ticks = s_hblank_ticks;
     out->hblank_walks = s_hblank_walks;
     kj_g3_dl_stats(&out->dl_hits, &out->dl_misses, &out->dl_uncacheable, &out->dl_bytes);
+    for (int i = 0; i < KJ_PROBE_SLOTS; ++i) {
+        out->probe_ticks[i] = s_probe_ticks[i];
+        out->probe_calls[i] = s_probe_calls[i];
+        s_probe_ticks[i] = 0;
+        s_probe_calls[i] = 0;
+    }
 #if defined(SDK_PORT_3DS) && !defined(HGSS_PROFILE_OFF)
     {
         /* The game's Pokemon cipher reports its own calls when the debug
