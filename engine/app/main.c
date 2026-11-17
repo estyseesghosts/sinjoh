@@ -148,7 +148,7 @@ void kj_ctr_terminate(void)
 
 static void restore_forwarder_loader(int argc, char **argv)
 {
-    static const char prefix[] = "kohjoh-forwarder:restore=";
+    static const char prefix[] = "sinjoh-forwarder:restore=";
     for (int i = 1; i < argc; i++) {
         if (strncmp(argv[i], prefix, sizeof(prefix) - 1) == 0) {
             const char *value = argv[i] + sizeof(prefix) - 1;

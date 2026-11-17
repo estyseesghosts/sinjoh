@@ -50,6 +50,7 @@ engine/        kohjoh's runtime and GPU renderer, adapted (GPL-3.0)
   diagnostics/ perf ring, crash handler
 tools/
   game/        bootstrap, source inventory, overlay map, build driver
+  forwarder/   HOME Menu CIA forwarder (see docs/FORWARDER.md)
   lotus_mcp.py MCP client for windowed LOTUS
 wideart/       hand-drawn wide-view bands (no game pixels)
 patches/       sinjoh patch stacks (pokeplatinum, NitroSDK, NitroSystem)
@@ -91,6 +92,19 @@ result is an SD-card root; copy its `3ds` folder to the card's root. The
 instead, `builder/extract_rom.py` and `builder/pack.py` still work on their
 own. `pwsh tools/azahar/run.ps1 -Edition platinum -Pack ... -Manifest ...`
 stages a pack for Azahar and collects screenshots and the log.
+
+## HOME Menu forwarder
+
+`tools/forwarder/` builds a small CIA that starts
+`sdmc:/3ds/sinjoh-platinum.3dsx` from the HOME Menu. It contains no game code;
+install it once with FBI and update the `.3dsx` normally.
+
+```sh
+pwsh tools/forwarder/build.ps1    # -> build/forwarder/sinjoh-platinum.cia
+```
+
+It needs `makerom` and `bannertool` in addition to devkitPro; see
+`docs/FORWARDER.md` for the tool paths, title identity and limits.
 
 ## Provenance and licence
 

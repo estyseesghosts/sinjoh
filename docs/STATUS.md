@@ -77,6 +77,13 @@ manual steps; the parts below are what changed since the second pass.
   check the log and build ID, verify the title gradient, the wide bands, the
   lower menu and the field, then the soak and the failure triage. Not yet run
   on a console.
+- **HOME Menu forwarder**: `tools/forwarder/` builds
+  `build/forwarder/sinjoh-platinum.cia`, an installed shortcut that starts
+  `sdmc:/3ds/sinjoh-platinum.3dsx` through Luma's `hb:ldr` (title
+  **Sinjoh Platinum**, `CTR-H-SNJH`, unique ID `0xD7103`). The launched program
+  restores Luma's previous loader title from the `sinjoh-forwarder:restore=`
+  argument. Built and packaged; not yet installed on a console. See
+  `docs/FORWARDER.md`.
 
 ### Lessons this pass
 

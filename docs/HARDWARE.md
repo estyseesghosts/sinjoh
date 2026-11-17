@@ -39,7 +39,10 @@ or without `--sd` it writes a `sinjoh-sd/` SD-card root to copy. On Windows,
 `builder/prepare.bat` does the same by drag and drop. Nothing from the ROM, a
 save or a capture may be committed, and the `.pak` must not be shared.
 
-Launch it from the HOME Menu's homebrew launcher. The app logs to
+Launch it from the HOME Menu's homebrew launcher, or install
+`build/forwarder/sinjoh-platinum.cia` once with FBI to start the same
+`sdmc:/3ds/sinjoh-platinum.3dsx` from a HOME Menu icon (`docs/FORWARDER.md`).
+The app logs to
 `sdmc:/3ds/sinjoh/logs/platinum.log`; crashes write `logs/crash.txt`. Pull both
 off the card after the run.
 
