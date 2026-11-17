@@ -268,8 +268,15 @@ GAME_OBJS_RSP := $(OUT)/game_objs.rsp
 # devkitARM's tools are native Windows programs: response-file contents are
 # not path-converted by MSYS, so spell them as C:/... there. cygpath -f maps
 # the MSYS mount (/home/<user>, /c/...) back to the drive it lives on, which
-# the old leading-/x/ sed could not do.
+# the old leading-/x/ sed could not do. On Linux/macOS (CI, or devkitPro under
+# a normal shell) the paths are already native and cygpath does not exist;
+# piping through it left an empty response file and the link failed with
+# "undefined reference to `main'". Keep the .win name either way.
+ifeq ($(shell command -v cygpath >/dev/null 2>&1 && echo yes),yes)
 native_rsp = tr ' ' '\n' < $(1) | cygpath -w -m -f - | tr '\n' ' ' > $(1).win
+else
+native_rsp = tr ' ' '\n' < $(1) | tr '\n' ' ' > $(1).win
+endif
 write_game_objs_rsp = $(file >$(GAME_OBJS_RSP),$(GAME_OBJS) $(WIFI_STUBS_O))
 
 $(LIB): $(GAME_HEADER_DEFS) $(WIFI_STUBS_O)
