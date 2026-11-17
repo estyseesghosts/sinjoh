@@ -23,6 +23,13 @@ jobs:
       - name: Install build prerequisites
         run: apt-get update && apt-get install -y git python3 make zip unzip curl xz-utils ca-certificates
 
+      - name: Probe the toolchain layout
+        run: |
+          echo "DEVKITPRO=${DEVKITPRO:-unset} DEVKITARM=${DEVKITARM:-unset}"
+          command -v arm-none-eabi-gcc || echo "no arm-none-eabi-gcc on PATH"
+          ls /opt/devkitpro 2>/dev/null || echo "no /opt/devkitpro"
+          ls "${DEVKITARM:-/opt/devkitpro/devkitARM}/bin" 2>/dev/null | head -5 || true
+
       - name: Bootstrap the game and SDK sources
         run: python3 tools/game/bootstrap.py
 
