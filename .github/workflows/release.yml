@@ -56,6 +56,9 @@ jobs:
 
       - name: Build the HOME Menu forwarder (CIA)
         run: |
+          export DEVKITPRO="${DEVKITPRO:-/opt/devkitpro}"
+          export DEVKITARM="${DEVKITARM:-$DEVKITPRO/devkitARM}"
+          export PATH="$DEVKITARM/bin:$DEVKITPRO/tools/bin:$PATH"
           chmod +x tools/forwarder/build.sh
           tools/forwarder/build.sh
 
