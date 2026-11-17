@@ -1,5 +1,15 @@
 # sinjoh
 
+a reimplementation of [pokeplatinum-3ds](https://github.com/gabesud0/pokeplatinum-3ds) that works on the original nintendo 3ds 
+
+with technique as done in [kohjoh](https://github.com/estyseesghosts/kohjoh) and detailed further in [coffeepot](https://github.com/estyseesghosts/coffeepot)
+
+this repository does not include any nintendo assets or code. to play this port, you need your own retail copy of pokemon platinum - SHA-1 `0862ec35b24de5c7e2dcb88c9eea0873110d755c`.
+
+complain about this project [on discord](https://discord.gg/wJNprjYCun)
+
+---
+
 A native Nintendo 3DS source port of **Pokémon Platinum**, built for the
 **original 2011 3DS** (and 2DS) at stock clock and 64 MB application memory.
 
