@@ -16,13 +16,22 @@ mkdir -p "$out"
 
 devkitpro=${DEVKITPRO:-/opt/devkitpro}
 devkitarm=${DEVKITARM:-$devkitpro/devkitARM}
+# arm-none-eabi-gcc may live in $DEVKITARM/bin without being on PATH.
+if [ -z "${CC:-}" ] && ! command -v arm-none-eabi-gcc >/dev/null 2>&1 \
+        && [ -x "$devkitarm/bin/arm-none-eabi-gcc" ]; then
+    gcc="$devkitarm/bin/arm-none-eabi-gcc"
+fi
 gcc=${CC:-arm-none-eabi-gcc}
 specs=$devkitarm/arm-none-eabi/lib/3dsx.specs
 libctru=$devkitpro/libctru
 
-for tool in "$gcc" makerom bannertool; do
+if ! command -v "$gcc" >/dev/null 2>&1; then
+    echo "missing $gcc: install devkitPro devkitARM" >&2
+    exit 1
+fi
+for tool in makerom bannertool; do
     command -v "$tool" >/dev/null 2>&1 || {
-        echo "missing $tool: install devkitPro devkitARM, and put makerom and bannertool on PATH" >&2
+        echo "missing $tool: put makerom and bannertool on PATH" >&2
         exit 1
     }
 done
