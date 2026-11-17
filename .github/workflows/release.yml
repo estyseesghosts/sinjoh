@@ -25,15 +25,14 @@ jobs:
 
       - name: Install makerom and bannertool
         run: |
-          curl -fsSL -o /tmp/makerom.zip \
-            https://github.com/3DSGuy/Project_CTR/releases/download/makerom-v0.19.0/makerom-v0.19.0-ubuntu_x86_64.zip
-          unzip -o /tmp/makerom.zip -d /tmp/makerom
-          install -m755 "$(find /tmp/makerom -type f -name makerom | head -1)" /usr/local/bin/makerom
+          # The published Linux binaries of both tools need GLIBC 2.38; this
+          # image is Debian 12 (2.36). Both build from source with no exotic
+          # dependencies (bannertool vendors stb headers; makerom needs zlib).
+          apt-get install -y cmake build-essential zlib1g-dev
+          git clone --depth 1 https://github.com/3DSGuy/Project_CTR /tmp/Project_CTR
+          make -C /tmp/Project_CTR/makerom -j"$(nproc)"
+          install -m755 /tmp/Project_CTR/makerom/bin/makerom /usr/local/bin/makerom
 
-          # The published bannertool Linux binaries need GLIBC 2.38; this image
-          # is Debian 12 (2.36). Its build has no external dependencies (vendored
-          # stb headers), so compile it here.
-          apt-get install -y cmake build-essential
           curl -fsSL -o /tmp/bt.tar.gz \
             https://github.com/carstene1ns/3ds-bannertool/archive/refs/tags/1.2.3.tar.gz
           tar -xzf /tmp/bt.tar.gz -C /tmp
