@@ -30,6 +30,9 @@ def main() -> int:
                     help="input script to stage as sdmc:/3ds/sinjoh/script.txt")
     ap.add_argument("--keep-script", action="store_true",
                     help="leave an existing script.txt in place when none is given")
+    ap.add_argument("--dspfirm", type=Path,
+                    help="copy this dspfirm.cdc to sdmc:/3ds/dspfirm.cdc so NDSP "
+                         "audio initialises (without it the game runs silent)")
     a = ap.parse_args()
     if not SD_SOURCE.is_dir():
         raise SystemExit(f"missing {SD_SOURCE}; run builder/prepare.py first")
@@ -48,6 +51,11 @@ def main() -> int:
         print(f"scripted: {a.script}")
     elif not a.keep_script:
         script.unlink(missing_ok=True)
+    if a.dspfirm is not None:
+        shutil.copyfile(a.dspfirm, card / "dspfirm.cdc")
+        print(f"dspfirm: {a.dspfirm}")
+    elif not (card / "dspfirm.cdc").is_file():
+        print("note: no dspfirm.cdc on the card; NDSP will not initialise (silent run)")
     # Fresh logs make the last run's output unambiguous.
     shutil.rmtree(sdmc / "3ds" / "sinjoh" / "logs", ignore_errors=True)
     print(f"card {a.card} -> {sdmc / '3ds'}")

@@ -37,6 +37,8 @@ void NitroPort_SoundSetInterpolation(int enabled);
 static ndspWaveBuf s_wave[BUFFER_COUNT];
 static int16_t *s_data;
 static Thread s_thread;
+static Thread s_silent_thread;
+static volatile bool s_silent_running;
 static LightEvent s_event;
 static volatile bool s_running;
 static bool s_ready;
@@ -281,10 +283,43 @@ static void audio_thread(void *arg)
     }
 }
 
+/* No NDSP output (no DSP firmware, no wave buffer, no thread): the DS sound
+ * chip still has to be clocked. Otherwise sequences never finish, cries never
+ * end, and a game wait on sound (the title's exit, for one) hangs forever.
+ * Run the mixer on its own thread, as the NDSP audio thread does, and drop
+ * the PCM. */
+static int16_t s_silent_pcm[2 * 2048];
+static uint32_t s_silent_phase;
+
+static void silent_thread(void *arg)
+{
+    (void)arg;
+    u64 last = svcGetSystemTick();
+    while (s_silent_running) {
+        svcSleepThread(16ull * 1000ull * 1000ull);
+        const u64 now = svcGetSystemTick();
+        u64 frames = (now - last) * 32768ull / SYSCLOCK_ARM11;
+        last = now;
+        if (frames > 2048u) {
+            frames = 2048u;
+        }
+        if (frames != 0) {
+            NitroPort_SoundRender(s_silent_pcm, (size_t)frames);
+        }
+    }
+}
+
 bool kj_audio_init(void)
 {
     NitroPort_SoundSetInterpolation(SOUND_INTERPOLATE);
     if (R_FAILED(ndspInit())) {
+        s_silent_running = true;
+        s_silent_thread = threadCreate(silent_thread, NULL, 16 * 1024, 0x18, 0, false);
+        if (s_silent_thread != NULL) {
+            kj_log("[audio] NDSP unavailable; clocking the DS sound chip on a silent thread");
+        } else {
+            kj_log("[audio] NDSP unavailable and no silent thread; the game may hang on sound waits");
+        }
         return false;
     }
     s_data = linearAlloc(BUFFER_BYTES * BUFFER_COUNT);
@@ -332,12 +367,33 @@ bool kj_audio_init(void)
     return true;
 }
 
+/* No NDSP output and the silent clock thread could not start: clock the DS
+ * sound chip from the game thread instead. Slow, but keeps sound waits
+ * moving. */
 void kj_audio_service(void)
 {
+    if (s_ready || s_silent_thread != NULL) {
+        return;
+    }
+    s_silent_phase += 32768u;
+    uint32_t frames = s_silent_phase / 60u;
+    s_silent_phase -= frames * 60u;
+    if (frames > 1024u) {
+        frames = 1024u;
+    }
+    if (frames != 0) {
+        NitroPort_SoundRender(s_silent_pcm, frames);
+    }
 }
 
 void kj_audio_exit(void)
 {
+    if (s_silent_thread != NULL) {
+        s_silent_running = false;
+        threadJoin(s_silent_thread, U64_MAX);
+        threadFree(s_silent_thread);
+        s_silent_thread = NULL;
+    }
     if (!s_ready) {
         return;
     }

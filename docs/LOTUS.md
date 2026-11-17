@@ -133,6 +133,19 @@ Home, Power). So START is `0x400`, not `0x8`; sending `0x8` presses Y. The
 debug build logs `[input] pad xxxx` when the pad changes, which is the quick
 way to check a mapping.
 
+NDSP needs `sdmc:/3ds/dspfirm.cdc`. Without it the port starts silent, and
+before the silent-clock fix a sound wait (the title's exit) never returned.
+Copy it once into the card with `stage_card.py --dspfirm <path>`; the file is
+not part of the repo.
+
+Captures are artifacts with a lifetime quota in v0.0.3. After a few dozen
+`lotus_capture` calls, the RPC returns `artifact quota reached; restart host
+to reset catalog`, `ctl.py capture` saves nothing, and the window can stay on
+an old guest frame while the game keeps running (audio continues, the frame
+counter advances). That is the host, not the port. Restart `bridge.py` to
+reset the catalog; issue estyseesghosts/lotus#27 covers bounded retention and
+release.
+
 ## Tools used
 
 `lotus_status` (frontend, assets, cards), `lotus_create_session`
