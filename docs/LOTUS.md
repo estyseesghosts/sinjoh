@@ -119,6 +119,13 @@ A primary card's guest SD is
 `.../sdmc/3ds/`. A secondary session can copy that card for a disposable run,
 or start empty.
 
+Scripted input owns the pad for the whole run. While `script.txt` exists,
+`kj_script_input` answers every frame, including all-zero frames, so
+`lotus_input` is ignored; a live press during a scripted run proves nothing.
+To drive a session by hand, stage with no `--script` (that deletes
+`script.txt`) and keep the save: `stage_card.py` copies the tree over the
+card and leaves `saves/` in place.
+
 ## Tools used
 
 `lotus_status` (frontend, assets, cards), `lotus_create_session`
