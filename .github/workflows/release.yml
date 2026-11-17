@@ -23,12 +23,15 @@ jobs:
       - name: Install build prerequisites
         run: apt-get update && apt-get install -y git python3 make zip unzip curl xz-utils ca-certificates
 
-      - name: Probe the toolchain layout
+      - name: Install makerom and bannertool
         run: |
-          echo "DEVKITPRO=${DEVKITPRO:-unset} DEVKITARM=${DEVKITARM:-unset}"
-          command -v arm-none-eabi-gcc || echo "no arm-none-eabi-gcc on PATH"
-          ls /opt/devkitpro 2>/dev/null || echo "no /opt/devkitpro"
-          ls "${DEVKITARM:-/opt/devkitpro/devkitARM}/bin" 2>/dev/null | head -5 || true
+          # The devkitPro apt repo (configured in the image) builds these for the
+          # container's base, so they run there; the upstream release binaries
+          # need a newer glibc than the image has.
+          apt-get install -y makerom bannertool \
+            || { apt-cache search bannertool; apt-cache search makerom; exit 1; }
+          makerom -v | head -2
+          bannertool 2>&1 | head -2 || true
 
       - name: Bootstrap the game and SDK sources
         run: python3 tools/game/bootstrap.py
@@ -38,21 +41,6 @@ jobs:
 
       - name: Build the measurement profile
         run: make -f engine/game.mk TARGET=3ds program PROFILE=1 -j"$(nproc)"
-
-      - name: Install makerom and bannertool
-        run: |
-          curl -fsSL -o /tmp/makerom.zip \
-            https://github.com/3DSGuy/Project_CTR/releases/download/makerom-v0.19.0/makerom-v0.19.0-ubuntu_x86_64.zip
-          unzip -o /tmp/makerom.zip -d /tmp/makerom
-          install -m755 "$(find /tmp/makerom -type f -name makerom | head -1)" /usr/local/bin/makerom
-
-          curl -fsSL -o /tmp/bannertool.tar.gz \
-            https://github.com/carstene1ns/3ds-bannertool/releases/download/1.2.3/bannertool-1.2.3-linux.tar.gz
-          tar -xzf /tmp/bannertool.tar.gz -C /tmp
-          install -m755 "$(find /tmp -type f -name bannertool | head -1)" /usr/local/bin/bannertool
-
-          makerom -v | head -2
-          bannertool 2>&1 | head -2 || true
 
       - name: Build the HOME Menu forwarder (CIA)
         run: |
