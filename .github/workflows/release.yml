@@ -1,0 +1,108 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (a tag like v0.0.1 is created if it does not exist)"
+        required: true
+        default: "v0.0.1"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    container: devkitpro/devkitarm:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build prerequisites
+        run: apt-get update && apt-get install -y git python3 make zip curl xz-utils ca-certificates
+
+      - name: Bootstrap the game and SDK sources
+        run: python3 tools/game/bootstrap.py
+
+      - name: Build the release profile
+        run: make -f engine/game.mk TARGET=3ds program PROFILE=0 -j"$(nproc)"
+
+      - name: Build the measurement profile
+        run: make -f engine/game.mk TARGET=3ds program PROFILE=1 -j"$(nproc)"
+
+      - name: Install makerom and bannertool
+        run: |
+          curl -fsSL -o /tmp/makerom.zip \
+            https://github.com/3DSGuy/Project_CTR/releases/download/makerom-v0.19.0/makerom-v0.19.0-ubuntu_x86_64.zip
+          unzip -o /tmp/makerom.zip -d /tmp/makerom
+          install -m755 "$(find /tmp/makerom -type f -name makerom | head -1)" /usr/local/bin/makerom
+
+          curl -fsSL -o /tmp/bannertool.tar.gz \
+            https://github.com/carstene1ns/3ds-bannertool/releases/download/1.2.3/bannertool-1.2.3-linux.tar.gz
+          tar -xzf /tmp/bannertool.tar.gz -C /tmp
+          install -m755 "$(find /tmp -type f -name bannertool | head -1)" /usr/local/bin/bannertool
+
+          makerom -v | head -2
+          bannertool 2>&1 | head -2 || true
+
+      - name: Build the HOME Menu forwarder (CIA)
+        run: |
+          chmod +x tools/forwarder/build.sh
+          tools/forwarder/build.sh
+
+      - name: Package the ROM-data setup tools
+        run: |
+          mkdir -p dist
+          (cd builder && zip -9 -r ../dist/sinjoh-asset-tools.zip \
+              README.md prepare.py prepare.bat extract_rom.py pack.py verify_rom.py)
+          unzip -l dist/sinjoh-asset-tools.zip
+
+      - name: Collect the release files
+        run: |
+          mkdir -p dist
+          cp build/game/3ds/sinjoh-platinum.3dsx dist/
+          cp build/game/3ds-prof/sinjoh-platinum-dbg.3dsx dist/
+          cp build/forwarder/sinjoh-platinum.cia dist/
+          ls -l dist
+
+      - name: Upload the build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sinjoh-release
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Publish the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+          name: Sinjoh Platinum ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true
+          files: |
+            dist/sinjoh-platinum.3dsx
+            dist/sinjoh-platinum-dbg.3dsx
+            dist/sinjoh-platinum.cia
+            dist/sinjoh-asset-tools.zip
+          body: |
+            Native 3DS port of Pokemon Platinum for the original 3DS / 2DS (O3DS profile, stock clock).
+
+            **This release contains no game data.** You need your own Platinum `.nds`.
+
+            ### Install
+            1. Copy `sinjoh-platinum.3dsx` to `sdmc:/3ds/` (keep the name).
+            2. Unzip `sinjoh-asset-tools.zip`. On Windows drag your `.nds` onto `prepare.bat`;
+               elsewhere run `python prepare.py your-game.nds`. It checks the dump and writes
+               the data pack; add `--sd E:\` to write straight to the card.
+            3. Copy the produced `3ds/sinjoh/` folder to your card's root (or use `--sd`).
+            4. Launch **Sinjoh Platinum** from the Homebrew Launcher.
+               `sinjoh-platinum.cia` is an optional Luma3DS HOME Menu shortcut that runs the
+               .3dsx from that exact path; install it once with FBI.
+
+            `sinjoh-platinum-dbg.3dsx` is the measurement build (perf counters, `[probe]` slots).
+            It is slower and only useful for profiling.
+
+            Never share the generated `.pak` files: they contain your game's data.
