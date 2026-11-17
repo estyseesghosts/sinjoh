@@ -63,7 +63,7 @@ manual steps; the parts below are what changed since the second pass.
   cannot reuse the other's objects. `-All` builds both. The build ID is
   regenerated each build, rewritten only on change, and is a normal
   prerequisite of the ARM11 objects, so an ID change relinks; the current
-  build reports `sinjoh-f8a26377d618`, debug `sinjoh-f8a26377d618-dbg`.
+  build reports `sinjoh-7ea481694b05`, debug `sinjoh-7ea481694b05-dbg`.
 - **One-step packaging** (`465c25e`): `builder/prepare.py <rom> [--sd E:\]`
   checks the dump, extracts, writes and re-checks `platinum.pak`, copies the
   manifest, and stages the programs at `3ds/` with their data at
@@ -123,7 +123,7 @@ in `docs/LESSONS.md`. The short version:
 ## 2026-11-16 fourth pass: geometry FIFO and retained band quads
 
 Instrumented runs (starting at `sinjoh-2f56f3e01fd8-dbg`; final build
-`sinjoh-f8a26377d618-dbg`) in the same windowed LOTUS session, title/opening
+`sinjoh-7ea481694b05-dbg`) in the same windowed LOTUS session, title/opening
 sequence, 600-frame windows.
 
 - **The display-list cache was not working; the cause was the SDK's 118-word
