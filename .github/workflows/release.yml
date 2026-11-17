@@ -25,11 +25,23 @@ jobs:
 
       - name: Install makerom and bannertool
         run: |
-          # The devkitPro apt repo (configured in the image) builds these for the
-          # container's base, so they run there; the upstream release binaries
-          # need a newer glibc than the image has.
-          apt-get install -y makerom bannertool \
-            || { apt-cache search bannertool; apt-cache search makerom; exit 1; }
+          curl -fsSL -o /tmp/makerom.zip \
+            https://github.com/3DSGuy/Project_CTR/releases/download/makerom-v0.19.0/makerom-v0.19.0-ubuntu_x86_64.zip
+          unzip -o /tmp/makerom.zip -d /tmp/makerom
+          install -m755 "$(find /tmp/makerom -type f -name makerom | head -1)" /usr/local/bin/makerom
+
+          # The published bannertool Linux binaries need GLIBC 2.38; this image
+          # is Debian 12 (2.36). Its build has no external dependencies (vendored
+          # stb headers), so compile it here.
+          apt-get install -y cmake build-essential
+          curl -fsSL -o /tmp/bt.tar.gz \
+            https://github.com/carstene1ns/3ds-bannertool/archive/refs/tags/1.2.3.tar.gz
+          tar -xzf /tmp/bt.tar.gz -C /tmp
+          cmake -S /tmp/3ds-bannertool-1.2.3 -B /tmp/3ds-bannertool-1.2.3/build \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build /tmp/3ds-bannertool-1.2.3/build -j"$(nproc)"
+          install -m755 "$(find /tmp/3ds-bannertool-1.2.3/build -type f -name bannertool)" /usr/local/bin/bannertool
+
           makerom -v | head -2
           bannertool 2>&1 | head -2 || true
 
