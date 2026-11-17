@@ -158,6 +158,25 @@ gen_fx_const.py <csv> <header>`) that `libs` and the engine objects depend on.
 Verified by deleting the header and building: `GEN nitro/fx/fx_const.h` then a
 clean link.
 
+## The link was Windows-shaped
+
+**Symptom.** CI compiled everything and then failed at the link with
+`undefined reference to \`main'`, right after `/bin/sh: 1: cygpath: not found`.
+
+**Cause.** The response files handed to devkitARM's native Windows tools are
+rewritten through `cygpath` so MSYS paths become `C:/...`. Inside a Linux
+container there is no `cygpath`, the pipeline produced an empty `link.rsp.win`,
+and the linker only received libs and the overlay table.
+
+**Fix.** `engine/game.mk` now picks the conversion only when `command -v
+cygpath` succeeds; otherwise it writes the paths unchanged into the same
+`.win` file. The `.win` filename is kept so the rules stay identical on both
+hosts.
+
+**Transferable.** Any build step that exists to adapt native-Windows tools must
+be a no-op, not a failure, on the other host — and the CI log line that names
+the missing tool is the fastest evidence, not the linker message after it.
+
 ## `-All` died on a libnitro race
 
 **Symptom.** The first build that produced both profiles failed with two makes
