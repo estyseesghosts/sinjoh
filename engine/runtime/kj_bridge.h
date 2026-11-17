@@ -225,6 +225,9 @@ typedef struct kj_ds_profile {
     uint64_t hblank_ticks;
     uint32_t hblank_walks;
     uint32_t dl_hits, dl_misses, dl_uncacheable, dl_bytes;
+    /* The game's Pokemon data cipher (EncodeData) since the last call: how
+     * often the field decrypts or re-encrypts a mon. Debug builds only. */
+    uint32_t mon_encode_calls, mon_encode_bytes;
 } kj_ds_profile;
 
 void kj_ds_take_profile(kj_ds_profile *out);

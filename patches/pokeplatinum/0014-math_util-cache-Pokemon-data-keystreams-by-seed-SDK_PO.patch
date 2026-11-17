@@ -1,0 +1,115 @@
+From 4a2c9e1d2f0b4c7d8e3a5b6c7d8e9f0a1b2c3d4e Mon Sep 17 00:00:00 2001
+From: terezi <jules@foxtails.me>
+Date: Mon, 16 Nov 2026 21:30:00 -0500
+Subject: [PATCH] math_util: cache Pokemon data keystreams by seed (SDK_PORT_3DS)
+
+EncodeData is the Pokemon data cipher: every GetMonData decrypts the party
+or box blocks with it and re-encrypts them on the way out, and the field
+reads the same Pokemon many times a frame. The keystream depends only on the
+seed (personality for the party block, checksum for the data blocks), so the
+last 32 seeds' streams are kept, direct-mapped by seed, and aligned data is
+XORed a word at a time. The bytes produced are identical to the LCRNG loop,
+and a block longer than 128 bytes still takes the LCRNG path.
+
+Port of kohjoh patches 2002/2005, where the cipher was about 12% of the
+field's ARM11 instructions (Azahar PC samples, kohjoh docs/chatlog08.md).
+Debug builds also count calls and bytes for the port's [mon] window line.
+---
+diff --git a/src/math_util.c b/src/math_util.c
+index 9df5a0d5..7476d8c2 100644
+--- a/src/math_util.c
++++ b/src/math_util.c
+@@ -214,9 +214,91 @@ u32 SumBytes(const void *data, u32 size)
+     return sum;
+ }
+ 
++#ifdef SDK_PORT_3DS
++/* Port performance (kohjoh patch 2002): the keystream depends only on the
++ * seed, and the field decrypts and re-encrypts the same Pokemon many times a
++ * frame, re-running the LCRNG for every call. Keep the last few seeds'
++ * streams. A full party is 12 seeds (personality and checksum per mon) and a
++ * boxed mon is two more, so 32 direct-mapped slots do not thrash. */
++#define ENCODE_KEYSTREAM_WORDS 64
++#define ENCODE_KEYSTREAM_SLOTS 32
++
++static struct {
++    u32 seed;
++    u32 valid;
++    /* 4-byte aligned so aligned data is XORed a word (two halfwords) at a
++     * time: half the loads and stores. */
++    union {
++        u16 h[ENCODE_KEYSTREAM_WORDS];
++        u32 w[ENCODE_KEYSTREAM_WORDS / 2];
++    } stream;
++} sEncodeKeystreams[ENCODE_KEYSTREAM_SLOTS];
++
++#ifndef HGSS_PROFILE_OFF
++/* Calls and bytes per profile window, so the port can say how much of the
++ * field's CPU this cipher is asked to do. Debug builds only. */
++static u32 sEncodeCalls, sEncodeBytes;
++
++void EncodeData_TakeStats(u32 *calls, u32 *bytes)
++{
++    *calls = sEncodeCalls;
++    *bytes = sEncodeBytes;
++    sEncodeCalls = sEncodeBytes = 0;
++}
++
++#define ENCODE_COUNT(size) (++sEncodeCalls, sEncodeBytes += (size))
++#else
++#define ENCODE_COUNT(size) ((void)0)
++#endif
++
++static const u16 *EncodeKeystream(u32 seed)
++{
++    int i = (int)((seed * 2654435761u) >> 27) & (ENCODE_KEYSTREAM_SLOTS - 1);
++
++    if (sEncodeKeystreams[i].valid && sEncodeKeystreams[i].seed == seed) {
++        return sEncodeKeystreams[i].stream.h;
++    }
++
++    sEncodeKeystreams[i].seed = seed;
++    sEncodeKeystreams[i].valid = 1;
++    {
++        u32 s = seed;
++        for (int k = 0; k < ENCODE_KEYSTREAM_WORDS; k++) {
++            sEncodeKeystreams[i].stream.h[k] = LCRNG_NextFrom(&s);
++        }
++    }
++    return sEncodeKeystreams[i].stream.h;
++}
++#endif
++
++#ifndef ENCODE_COUNT
++#define ENCODE_COUNT(size) ((void)0)
++#endif
++
+ void EncodeData(void *data, u32 size, u32 seed)
+ {
+     u16 *halfWords = (u16 *)data;
++
++    ENCODE_COUNT(size);
++#ifdef SDK_PORT_3DS
++    if (size / 2 <= ENCODE_KEYSTREAM_WORDS) {
++        const u16 *stream = EncodeKeystream(seed);
++
++        if ((((u32)data | size) & 3) == 0) {
++            u32 *words = (u32 *)data;
++            const u32 *key = (const u32 *)(const void *)stream;
++            for (u32 i = 0; i < size / 4; i++) {
++                words[i] ^= key[i];
++            }
++            return;
++        }
++
++        for (u32 i = 0; i < size / 2; i++) {
++            halfWords[i] ^= stream[i];
++        }
++        return;
++    }
++#endif
+     for (int i = 0; i < size / 2; i++) {
+         halfWords[i] ^= LCRNG_NextFrom(&seed);
+     }
+-- 
+2.56.0.windows.4

@@ -214,6 +214,16 @@ void kj_ds_take_profile(kj_ds_profile *out)
     out->hblank_ticks = s_hblank_ticks;
     out->hblank_walks = s_hblank_walks;
     kj_g3_dl_stats(&out->dl_hits, &out->dl_misses, &out->dl_uncacheable, &out->dl_bytes);
+#if defined(SDK_PORT_3DS) && !defined(HGSS_PROFILE_OFF)
+    {
+        /* The game's Pokemon cipher reports its own calls when the debug
+         * build links it; the release build has no such symbol. */
+        extern void EncodeData_TakeStats(u32 *calls, u32 *bytes) __attribute__((weak));
+        if (EncodeData_TakeStats != NULL) {
+            EncodeData_TakeStats(&out->mon_encode_calls, &out->mon_encode_bytes);
+        }
+    }
+#endif
     s_pump_ticks = s_hblank_ticks = 0;
     s_pump_calls = s_hblank_walks = 0;
 }

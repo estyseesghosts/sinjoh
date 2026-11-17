@@ -120,6 +120,58 @@ in `docs/LESSONS.md`. The short version:
   bedroom's rival encounter invalidated the outdoor walk schedule; the run was
   killed and the wide 3D left marked unverified rather than claimed.
 
+## 2026-11-16 fifth pass: the field, its profile, and the Pokemon cipher
+
+The field is now reachable without hand-driving the pad and has a measured
+steady state. `tools/lotus/field_run.py` creates the session, runs the title,
+presses START, A (Continue) and START again, and records whole 600-picture
+windows from the standing field. The second START is the one that matters: the
+journal only turns pages on A/left/right and closes on START or on B at page 0
+(`journal_controller.c`, `JournalController_HandleInput`), so a one-page save
+looks frozen under A presses.
+
+Field steady state (Snowpoint City, standing, O3DS profile, debug build),
+windows at pictures 4201-4800, three consecutive windows each run:
+
+| stage | p50 | p95 | p99 |
+|---|---|---|---|
+| logic | 4500 | 5763 | 6916 |
+| active logic+publish | 6593 | 8757 | 9189 |
+| publish | 2015 | 3236 | 3566 |
+| g2d | 501 | 591 | 1735 |
+| g3d | 971 | 2012 | 2277 |
+| submit | 294 | 351 | 1446 |
+
+Per game frame: 20 display lists replayed, 0 decoded, 0 uncacheable; 2112 BG
+quads, 66 OBJ quads, 6 draws, 2 spans; 40 3D batches, 873 triangles; H-blank
+walk 566 us; 10,071 G3 FIFO words and 1,475 commands. The display-list cache
+and the retained-layer work are doing their job in the field: every list is a
+hit, and no layer is rebuilt in an idle window. For scale, kohjoh's Goldenrod
+field is logic 13.4 ms at 51k G3 words and ~124 draws (kohjoh
+`docs/status.md`), so the port's field logic is about a third of that on a
+lighter scene; the shape (publish ~g2d+g3d+submit, H-blank ~0.5 ms) matches.
+
+- **The field decrypts Pokemon data 168 times a frame.** `[mon]` (new,
+  debug-only) counts `EncodeData` calls and bytes: 168 calls, 19,152 bytes per
+  game frame while standing still. Porting kohjoh's keystream cache (patches
+  2002/2005) to `EncodeData` — `patches/pokeplatinum/0014` — cut logic p50
+  4500 -> 4308 us (-4.3%), p95 5763 -> 5615, p99 6916 -> 6646, active 6593 ->
+  6399, and left g2d/g3d/publish unchanged (they do not call the cipher). The
+  before and after field captures are pixel-identical, so the cipher still
+  produces the same bytes for the same seeds.
+- **A ported optimization needs the port's own call count.** The first look at
+  the same log line read `[mon] ... 0 calls` on a build that had no
+  `EncodeData_TakeStats` symbol at all, because the counter lives in the game
+  patch and the engine references it weakly. A zero from an unreferenced weak
+  symbol is not a measurement; `nm` on the ELF (`EncodeData_TakeStats` present)
+  is what separates the two cases.
+- **One frame can be dumped on demand from a live session.** Dropping
+  `sdmc:/3ds/sinjoh/dump.now` on the card makes the debug build write
+  `sdmc:/3ds/sinjoh/dumps/fNNNNN.kjd` at the next 30-picture boundary
+  (`engine/graphics/renderer.c`). The file is the same KJD1 state the script
+  `dump` directive writes, so `kohjoh/tools/capture/ds_reference.py` can render
+  the DS picture it describes without replaying the run.
+
 ## 2026-11-16 fourth pass: geometry FIFO and retained band quads
 
 Instrumented runs (starting at `sinjoh-2f56f3e01fd8-dbg`; final build

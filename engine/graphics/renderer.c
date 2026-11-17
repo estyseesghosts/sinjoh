@@ -36,6 +36,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #define CMDBUF_BYTES (512 * 1024)
 
@@ -255,6 +256,10 @@ void kj_ctr_publish_frame(const kj_frame_input *in)
         kj_log("[ds] display lists: %lu replayed, %lu decoded, %lu uncacheable, %lu KiB retained",
                (unsigned long)dp.dl_hits, (unsigned long)dp.dl_misses,
                (unsigned long)dp.dl_uncacheable, (unsigned long)(dp.dl_bytes / 1024u));
+        kj_log("[mon] per game frame: Pokemon cipher %lu calls, %lu bytes (party/box decrypt "
+               "and re-encrypt; the keystream is cached by seed)",
+               (unsigned long)(dp.mon_encode_calls / gf),
+               (unsigned long)(dp.mon_encode_bytes / gf));
         uint32_t late, resyncs;
         kj_pacing_stats(&late, &resyncs);
         kj_log("[pace] 600 frames: late V-blanks %lu, resyncs %lu, presents skipped %lu",
@@ -330,6 +335,27 @@ void kj_ctr_publish_frame(const kj_frame_input *in)
         snprintf(path, sizeof(path), "%s/f%05lu.kjd", dir, (unsigned long)in->game_frame);
         kj_dump_frame(path, in);
     }
+#ifndef HGSS_PROFILE_OFF
+    /* A dump request dropped on the card, so a live session (no script.txt)
+     * can hand one frame to the offline oracle (tools/capture/
+     * ds_reference.py) without replaying the run. One stat every 30 pictures;
+     * debug builds only. */
+    else if ((in->game_frame % 30u) == 0u) {
+        const kj_paths *paths = kj_paths_get();
+        char request[128];
+        snprintf(request, sizeof(request), "%s/dump.now", paths->root);
+        if (access(request, F_OK) == 0) {
+            char dir[128];
+            char path[144];
+            remove(request);
+            snprintf(dir, sizeof(dir), "%s/dumps", paths->root);
+            mkdir(dir, 0777);
+            snprintf(path, sizeof(path), "%s/f%05lu.kjd", dir,
+                     (unsigned long)in->game_frame);
+            kj_dump_frame(path, in);
+        }
+    }
+#endif
     const uint32_t hold = kj_script_freeze(in->game_frame);
     if (hold > 0) {
         kj_log("[script] holding game frame %lu for %lu s", (unsigned long)in->game_frame,

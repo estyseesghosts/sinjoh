@@ -256,3 +256,28 @@ included window chrome; PDF-then-PNG round-trips lost pixels.
 320x240 screens without the host compositor in the path.
 
 **Transferable.** Capture at the emulator boundary, not from the desktop.
+## A ported optimization needs this port's call count
+
+**Symptom.** kohjoh's Pokemon-data keystream cache (its patches 2002/2005) is
+a measured win there (crypto ~12% of field instructions). Porting it to
+Platinum's `EncodeData` was worth -4.3% of logic, not 12%, and the first
+`[mon]` reading of the field said `0 calls`, which would have made it worth
+nothing.
+
+**Cause.** Two separate things. The call count differs by game: Platinum's
+field decrypts the party 168 times a frame (19 KB), HGSS's field decrypts far
+more. And the `0 calls` was not a measurement at all: the counter lives in the
+game patch, the engine reads it through a weak symbol, and the build that
+printed zero had no such symbol. `nm` on the ELF showed
+`EncodeData_TakeStats` missing, which is why the weak reference resolved to
+NULL.
+
+**Fix.** Ported the cache with a debug-only call/byte counter and a `[mon]`
+window line, and read the count from a build that defines the symbol. Logic
+p50 4500 -> 4308 us, active 6593 -> 6399, captures pixel-identical.
+
+**Transferable.** A weak symbol that is absent reads as zero, and zero is a
+plausible answer for a hot-path question, so the failure is silent. Check the
+symbol exists in the ELF before believing a zero counter, and measure the
+ported optimization in the target game before claiming the source game's
+number.
