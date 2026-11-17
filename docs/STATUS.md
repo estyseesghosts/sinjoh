@@ -130,8 +130,9 @@ journal only turns pages on A/left/right and closes on START or on B at page 0
 (`journal_controller.c`, `JournalController_HandleInput`), so a one-page save
 looks frozen under A presses.
 
-Field steady state (Snowpoint City, standing, O3DS profile, debug build),
-windows at pictures 4201-4800, three consecutive windows each run:
+Field steady state (Snowpoint City, standing, O3DS profile, debug build
+`sinjoh-c9488f040ac2-dbg`; both profiles rebuilt at that commit), windows at
+pictures 4201-4800, three consecutive windows each run:
 
 | stage | p50 | p95 | p99 |
 |---|---|---|---|
@@ -171,6 +172,18 @@ lighter scene; the shape (publish ~g2d+g3d+submit, H-blank ~0.5 ms) matches.
   (`engine/graphics/renderer.c`). The file is the same KJD1 state the script
   `dump` directive writes, so `kohjoh/tools/capture/ds_reference.py` can render
   the DS picture it describes without replaying the run.
+- **The field is a 3D scene, and the port draws what the dump says.** In the
+  dumped field frame (4440 and 4500, same picture) engine A's four 2D layers
+  are enabled but every tile is transparent, and the 3D scene is 40 batches /
+  873 triangles — the same triangle count the `[gpu]` line reports per frame.
+  `ds_reference.py` renders that state as a blank 256x192 picture;
+  `g3_reference.py` draws the 873 triangles into a sub-rectangle of its
+  400x240 canvas that matches the port's capture (content at x 122..399,
+  y 0..163 in the capture, x ~100..399, y 0..170 in the oracle, flat-shaded),
+  so the placement is not a viewport or draw-order fault in the GPU path. Why
+  the DS state frames the field into a sub-rectangle with flat backdrop around
+  it is open; it needs a DS emulator's reference of the same save before anyone
+  calls it a port bug.
 
 ## 2026-11-16 fourth pass: geometry FIFO and retained band quads
 
@@ -382,12 +395,16 @@ heap/struct corruption in the port.
   authorities: neither models instruction cache, service-core contention, SD
   stalls or VRAM hazards, so the field numbers above are `AZAHAR_PASS` only,
   and LOTUS's Vulkan path is faster and less faithful still.
-- The measurement covers one interior field scene (the player's room, via the
-  real save). The acceptance corpus wants the worst-case outdoor scenes and a
-  10-minute run; neither exists yet.
-- The 3D wide camera is unverified in the field. The lower-screen start menu
-  is built and drawn; its tap routing and every app it can open still need a
-  run through, and the panel apps (map, bag, party, trainer case) are absent.
+- The measurement covers the Snowpoint City field (outdoor, standing). The
+  acceptance corpus wants worst-case scenes (routes with weather, battle,
+  rain) and a 10-minute run; neither exists yet.
+- The 3D wide camera is unverified in the field: the field capture puts the
+  picture in a sub-rectangle of the 400x240 target, and the offline oracles
+  agree with the port about that framing, so the next step is a DS emulator's
+  picture of the same save rather than a renderer change.
+- The lower-screen start menu is built and drawn; its tap routing and every app
+  it can open still need a run through, and the panel apps (map, bag, party,
+  trainer case) are absent.
 - The screens pokeplatinum-3ds lays out in parts are not implemented.
 
 ## Builds and packaging
@@ -440,14 +457,16 @@ create, run, capture and stop sessions. Both build profiles can run at once.
    ~28 ms of headroom per frame, so cost removal there is not justified by
    data yet. Then a real-hardware pass with `docs/HARDWARE.md` and the staged
    card (`build/sinjoh-platinum-sd.zip`).
-7. Front-end progression, which now blocks field verification: overlay `0x4D`
-   (`game_opening`) stays in MAIN/procState 4 and never enqueues the title.
-   Instrument `ov77_021D2D94` (is it called, does `unk_04` advance?), then
-   compare with stock pokeplatinum in melonDS on the same save. Do this before
-   any further field measurement.
-8. After the front end moves: field steady state with the `snowpoint.sav`
-   save (hand-driven input works now; `stage_card.py` without `--script`), and
-   the visual pass on the retained bands, screen edges and a field scene.
+7. The field's 3D framing: dump a field frame (`dump.now`), then compare the
+   DS state against a DS emulator's own picture of the same save. The offline
+   2D and 3D oracles agree with the port on the sub-rectangle, so the next
+   question is whether the *state* is right, not the GPU path.
+8. After that, the field's remaining costs in order (fifth pass): game logic
+   ~3.9 ms (needs attribution; the cipher was 168 calls/frame and is now
+   cached), H-blank walk 566 us, g3d 971 us for 40 batches of ~22 triangles
+   (per-batch palette `memcmp`/upload and TEV/cull state are the suspects), and
+   the ~250 us of publish outside its stages. Nothing is near the 33 ms frame
+   budget yet, so prefer measured work removal over restructuring.
 
 ## Deliberately not planned (O3DS)
 
