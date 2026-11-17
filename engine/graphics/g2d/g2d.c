@@ -1511,6 +1511,9 @@ static bool text_bg_retained(const ctx *c, int bg, drawable *out, uint64_t *art_
 /* The layer's edge and wide-art band quads, retained beside the layer's own
  * quads: they are built from exactly the same registers and art, so they are
  * rebuilt only when the layer is. */
+/* The PICA reads vertex buffers from the address it is given, so these are
+ * linearAlloc exactly like the layer's own quads; heap memory would be stale
+ * and the bands would draw nothing (the target's clear would show). */
 static bool art_alloc(layer_cache *lc)
 {
     if (lc->edge == NULL) {
