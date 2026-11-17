@@ -108,7 +108,24 @@ def main() -> int:
     run(port, sid, a.title_frames)
     tap(port, sid, START, after=400)   # title -> main menu
     tap(port, sid, A, after=600)       # Continue -> game_start + journal
-    tap(port, sid, START, after=600)   # journal -> field
+    # START closes the journal, but a press sent while the journal is still
+    # fading in is swallowed, and the recorded window then shows a still
+    # capture with zero 3D and no probe line -- numbers that look fine and
+    # describe the wrong screen. The remaster menu logs when the field comes
+    # up, so press again until that marker arrives. The presses are spaced to
+    # fill the same 600-frame settle the fixed sequence used, so the windows
+    # still start on the same pictures as earlier runs.
+    settle, used, reached = 600, 0, False
+    while used + TAP_FRAMES + 120 <= settle:
+        tap(port, sid, START, after=120)
+        used += TAP_FRAMES + 120
+        if any("field lower screen on" in line for line in log_since(mark)):
+            reached = True
+            break
+    if not reached:
+        raise SystemExit("never reached the field: no '[menu] field lower screen on'")
+    if used < settle:
+        run(port, sid, settle - used)
 
     for i in range(a.windows):
         run(port, sid, 600)

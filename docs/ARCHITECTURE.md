@@ -73,8 +73,18 @@ For sinjoh this is also the 2D remaster path: the top screen's 2D is drawn on a
   while preserving game updates, animation and resource retirement.
 - Retained object-space meshes, the literal-colour baked block cache, and the
   clip-volume side-plane cull are kohjoh's O3DS wins and are kept.
+- Per-batch state is filtered: culling, depth and blend are sent only when their
+  value changes, and the 32-word shininess table only when the table itself
+  changes. In the field 82% of those setter calls were redundant (38,511 of
+  46,680 per 600 frames), and skipping them cost nothing anywhere else. The
+  caches are sentinelled and reset at the frame's program bind, so the first
+  batch of a frame is always unconditional.
 - The box test is widened for widescreen so side content is not culled. That
   widening is also the remaster's "wider view" for Platinum.
+- A batch is a *material*, not a strip of one material: consecutive field
+  batches share no state, so joining them into fewer draws needs a union
+  palette and a remapped index buffer, not an adjacency test. That is an idea,
+  not a feature; the measurement that says so is in `docs/STATUS.md`.
 
 Not implemented yet, and counted rather than silently dropped: fog, toon
 highlight, edge marking, shadow volumes, wireframe, display capture, bitmap
@@ -118,3 +128,39 @@ canvas; WideArt bands are precomputed, not synthesized per frame.
 - No interpolation path to satisfy: the O3DS tier is 30 Hz by contract.
 - The patch stack is re-derived against the `kj_*` bridge instead of carrying
   a second renderer's `NitroPort_*` API.
+
+## Measuring
+
+Two profiles, never mixed: `tools/build.ps1` builds the release binary with the
+instrumentation compiled out (`HGSS_PROFILE_OFF`) and `-Profile 1` the
+measurement binary with every counter on. Only the debug build prints
+`[perf]`, `[gpu]`, `[ds]`, `[mon]` and `[probe]`.
+
+The steady state is the field: `tools/lotus/field_run.py` drives title, START,
+A (Continue), START, then records whole 600-picture windows. Windows are compared
+at fixed picture numbers (4201-4800), so two builds see the same content.
+
+What counts as evidence, in order:
+
+1. **Work removed** - draws, decodes, uploads, skipped calls, bytes read. These
+   transfer to a stock O3DS. A counter that shows an optimization *declining*
+   is as valuable as one that shows it firing (`merge joined 0` ended a day of
+   guessing).
+2. **Host microseconds** from `[perf]` - indicative only. LOTUS is an emulator;
+   a microsecond delta is not an O3DS delta.
+3. **Pixels** - captures of both screens at fixed pictures, compared with
+   `ImageChops.difference`. `bbox None` is the correctness claim; anything else
+   means the change altered output and must be explained.
+
+Attribution uses `NitroPort_ProbeNow`/`NitroPort_NoteProbeSince`
+(`KJ_PROBE_SLOTS` slots, printed per game frame by the `[probe]` line). Slots
+are laid out as siblings - the whole call in slot 0, its parts in 1..n - so the
+remainder is the part still not measured. Two rules learned the hard way: use
+`svcGetSystemTick`, never `OS_GetTick` (which syncs the DS timers, ~8 us per
+frame), and remove the temporary slots from the game sources once the reading
+is taken; the facility stays, the probes do not.
+
+Three traps that produced wrong numbers here, all now in `docs/LESSONS.md`:
+two builds at once (a linked binary that exists in no tree), a weak symbol
+absent from the ELF (a counter that reads zero because nothing defines it), and
+comparing runs from different sources.

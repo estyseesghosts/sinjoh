@@ -120,54 +120,73 @@ in `docs/LESSONS.md`. The short version:
   bedroom's rival encounter invalidated the outdoor walk schedule; the run was
   killed and the wide 3D left marked unverified rather than claimed.
 
-## 2026-11-16 sixth pass: per-batch 3D state, and the main loop attributed
+## 2026-11-16 fourth pass: geometry FIFO and retained band quads
 
-Same harness and session (Snowpoint City, standing), windows at pictures
-4201-4800, three consecutive windows, both profiles rebuilt from one source.
+Instrumented runs (starting at `sinjoh-2f56f3e01fd8-dbg`; final build
+`sinjoh-7ea481694b05-dbg`) in the same windowed LOTUS session, title/opening
+sequence, 600-frame windows.
 
-- **The field re-sent cull, depth and blend on every batch.** Consecutive DS
-  batches in the field mostly repeat them, and citro3d writes the changed state
-  at draw time (coffeepot `PICA200/gpu-rendering.md`, "What a draw call costs":
-  each state change is 1-2 us on top of a ~9.7 us draw). Skipping a setter when
-  its value is already set (`state skips`) removed **38,511 of 46,680** setter
-  calls in a 600-frame window (26 draws/frame x 3 setters = 78 per frame, 63.9
-  skipped): g3d p50 **972 -> 832 us**, publish **2015 -> 1876 us**. Draws,
-  palette uploads and lighting uploads are unchanged (15,560 draws, 10,503
-  palettes / 12,059 matrices, 9,336 lighting, 0 shininess), and captures at both
-  ends are pixel-identical. The caches are sentinelled (`0xFFFFFFFF`) and reset
-  at the frame's program bind, so the first batch of a frame is unconditional.
-- **The shininess table split is right but free here.** The 32 uniform words
-  are only re-sent when the table actually changes, counted as
-  `shininess uploads`: **0 in the field**, which means the field never uses the
-  specular table at all. Kept because battle and menu scenes can.
-- **An adjacency batch merge was tried and removed.** Joining contiguous
-  same-state batches into one `C3D_DrawElements` (the obvious lever, since each
-  draw is ~9.7 us) joined **zero** batches in the field and zero in the title
-  scene: `merge joined 0`, and the block was always the material, not the
-  matrix palette (`blocked state 15,093`, `matrices 0`). Every consecutive batch
-  is a different material, so no adjacency key can ever match. Joining draws
-  here needs a union palette plus an index remap and a state-sorted draw order,
-  which is a different (and larger) change.
-- **The main loop is now attributed.** The earlier "~1.9 ms of logic outside
-  the field update" was an artifact of the mixed binary; from one clean build
-  (`NitroPort_ProbeNow` slots in `main.c` and `field_system.c`):
+- **The display-list cache was not working; the cause was the SDK's 118-word
+  GX FIFO bursts.** `[dlcov]` put every word in `split`/`open-begin`, `[dltop]`
+  reported 0 hits and `[ds]` reported 600 replayed, 0 decoded, 1200
+  uncacheable. Ported kohjoh's patch 2003 as
+  `patches/NitroSDK/0028-...-one-transfer-under-SDK_.patch`: under
+  `SDK_PORT_3DS`, `MIi_GX_LENGTH_ONCE` is `0x1FFFF * sizeof(u32)`, so a
+  command buffer goes out in one DMA transfer instead of bursts paced by the
+  half-empty interrupt. The FIFO is unbounded in the port, so the words, order
+  and completion callback are unchanged. After it, the same boot reports
+  11,999 replayed / 137 decoded / 0 uncacheable in the 40 s window, 23,006 /
+  47 / 0 at 60 s, and `[dlcov] words hit 11.2 M` against 583 k `short`.
+- **The edge and wide-art band quads were rebuilt every frame even when their
+  layer was retained.** `prepare_span` called `edge_band_quads` and
+  `band_quads` unconditionally, so the steady state did 192 atlas lookups per
+  frame with `layers reused 3600 rebuilt 0`. They are functions of the same
+  registers and art as the layer, so `layer_cache` now keeps them (`edge`,
+  `band`, `art_valid`, `art_screen`) and `art_quads` reuses them until the
+  layer is rebuilt or changes screen. Measured on the same timeline: atlas
+  lookups fell from 65,328 to 14,784 per 600 frames at 20 s and from 36,096 to
+  9,408 at 40 s; `g2d` p50 fell from 563 to 476 us and `publish` from 635 to
+  527 us at 20 s.
+- **The cached art quads must be in GPU-visible memory.** The first version
+  allocated `edge`/`band` with `malloc`, unlike the layer's own quads
+  (`linearAlloc`). The PICA read stale memory, so the bands drew nothing and
+  the top target's white clear showed through: the copyright screen's side
+  bands were white in every frame that took the retained path, and correct in
+  frames that took the per-span path, which made it look intermittent. With
+  `linearAlloc` the bands are back, and the frame-172 capture is pixel-identical
+  to the pre-change build (`ImageChops` difference bbox empty). The same
+  frame now matches at 172 and 371 by pixel sampling.
+- A debug-only `[input]` line now logs the pad word whenever it changes, which
+  is how the LOTUS `lotus_input` bit mapping was checked.
 
-  | probe | covers | us per game frame |
-  |---|---|---|
-  | slot 0 | whole `HandleInputsEventsAndProcesses` | 2419 |
-  | slot 1 | `HandleFieldInput` | 236 |
-  | slot 2 | `FieldTask_Run` + Poketch event | 47 |
-  | slot 3 | `ApplicationManager_Exec` of `gFieldMapTemplate` | 2132 |
-  | slot 4 | `CommSys_Update` + `RunApplication` + main/print tasks | 2576 |
-  | slot 5 | RTC, playtime, `sub_020241CC` (G3 swap), print tasks | 5 |
-  | slot 6 | post-V-blank: brightness, fade, vblank cb, sound, post tasks | 67 |
+### The field is still blocked in the front end
 
-  The map app is 2132 of the 2419 us field update and 50% of the 4299 us logic.
-  Everything the main loop does around it is ~230 us; the one part still not in
-  a window is ~1.6 ms of timer/frame-pacing overhead around the probes, which
-  `[pace]` and `[gamecpu]` cover rather than the probes. The probe slots were
-  removed from the game sources after this reading (they are a debug build
-  facility, not part of the game).
+Not LOTUS and not the decompilation: the game is stuck inside overlay `0x4D`
+(`game_opening`), not ignoring input.
+
+- The real START edge reaches the guest: `lotus_input` `buttons = 0x400`
+  produces `[input] pad 0008`, and guest memory shows
+  `gSystem.heldKeysRaw = 0x8`, `pressedKeysRaw = 0x8`.
+- Live state read through `lotus_read_memory`: `sApplication.currOverlayID =
+  0x4D`, `currApplication->execState = 2` (MAIN), `procState = 4`,
+  `nextOverlayID = NONE`, `nextApplication = NULL`. No `d_startmenu` or title
+  overlay is ever enqueued.
+- `ov77_021D25B0.c` case 4 returns as soon as `unk_04 >= 2430` frames. The run
+  reached 350 s (about 21,000 frames) with dozens of START edges. Either that
+  counter is not advancing or the app data is corrupt: the field where
+  `unk_04` should be read back as a pointer-like value (`0xC4C244`), while
+  `heapID` at data+0 is the correct 30.
+- `CommSys_Update()` returns TRUE unconditionally, so the game's application
+  update is not gated by the unimplemented `DWC_Init`.
+- Earlier "live input does nothing" tests were invalid for two separate
+  reasons, both now documented: scripted input owns the pad, and
+  `lotus_input`'s START bit is `0x400` (sending `0x8` presses Y).
+
+Next for this: GDB on overlay 77 with overlay symbols, log `unk_04` and
+`param1` once per V-blank and whether `main` is entered, and run stock
+pokeplatinum in melonDS with the same save to confirm the state machine
+leaves the opening. If `main` runs and the counter is garbage, treat it as
+heap/struct corruption in the port.
 
 ## 2026-11-16 fifth pass: the field, its profile, and the Pokemon cipher
 
@@ -247,73 +266,86 @@ lighter scene; the shape (publish ~g2d+g3d+submit, H-blank ~0.5 ms) matches.
   it is open; it needs a DS emulator's reference of the same save before anyone
   calls it a port bug.
 
-## 2026-11-16 fourth pass: geometry FIFO and retained band quads
+## 2026-11-16 sixth pass: per-batch 3D state, and the main loop attributed
 
-Instrumented runs (starting at `sinjoh-2f56f3e01fd8-dbg`; final build
-`sinjoh-7ea481694b05-dbg`) in the same windowed LOTUS session, title/opening
-sequence, 600-frame windows.
+Same harness and session (Snowpoint City, standing), windows at pictures
+4201-4800, three consecutive windows, both profiles rebuilt from one source.
 
-- **The display-list cache was not working; the cause was the SDK's 118-word
-  GX FIFO bursts.** `[dlcov]` put every word in `split`/`open-begin`, `[dltop]`
-  reported 0 hits and `[ds]` reported 600 replayed, 0 decoded, 1200
-  uncacheable. Ported kohjoh's patch 2003 as
-  `patches/NitroSDK/0028-...-one-transfer-under-SDK_.patch`: under
-  `SDK_PORT_3DS`, `MIi_GX_LENGTH_ONCE` is `0x1FFFF * sizeof(u32)`, so a
-  command buffer goes out in one DMA transfer instead of bursts paced by the
-  half-empty interrupt. The FIFO is unbounded in the port, so the words, order
-  and completion callback are unchanged. After it, the same boot reports
-  11,999 replayed / 137 decoded / 0 uncacheable in the 40 s window, 23,006 /
-  47 / 0 at 60 s, and `[dlcov] words hit 11.2 M` against 583 k `short`.
-- **The edge and wide-art band quads were rebuilt every frame even when their
-  layer was retained.** `prepare_span` called `edge_band_quads` and
-  `band_quads` unconditionally, so the steady state did 192 atlas lookups per
-  frame with `layers reused 3600 rebuilt 0`. They are functions of the same
-  registers and art as the layer, so `layer_cache` now keeps them (`edge`,
-  `band`, `art_valid`, `art_screen`) and `art_quads` reuses them until the
-  layer is rebuilt or changes screen. Measured on the same timeline: atlas
-  lookups fell from 65,328 to 14,784 per 600 frames at 20 s and from 36,096 to
-  9,408 at 40 s; `g2d` p50 fell from 563 to 476 us and `publish` from 635 to
-  527 us at 20 s.
-- **The cached art quads must be in GPU-visible memory.** The first version
-  allocated `edge`/`band` with `malloc`, unlike the layer's own quads
-  (`linearAlloc`). The PICA read stale memory, so the bands drew nothing and
-  the top target's white clear showed through: the copyright screen's side
-  bands were white in every frame that took the retained path, and correct in
-  frames that took the per-span path, which made it look intermittent. With
-  `linearAlloc` the bands are back, and the frame-172 capture is pixel-identical
-  to the pre-change build (`ImageChops` difference bbox empty). The same
-  frame now matches at 172 and 371 by pixel sampling.
-- A debug-only `[input]` line now logs the pad word whenever it changes, which
-  is how the LOTUS `lotus_input` bit mapping was checked.
+- **The field re-sent cull, depth and blend on every batch.** Consecutive DS
+  batches in the field mostly repeat them, and citro3d writes the changed state
+  at draw time (coffeepot `PICA200/gpu-rendering.md`, "What a draw call costs":
+  each state change is 1-2 us on top of a ~9.7 us draw). Skipping a setter when
+  its value is already set (`state skips`) removed **38,511 of 46,680** setter
+  calls in a 600-frame window (26 draws/frame x 3 setters = 78 per frame, 63.9
+  skipped): g3d p50 **972 -> 832 us**, publish **2015 -> 1876 us**. Draws,
+  palette uploads and lighting uploads are unchanged (15,560 draws, 10,503
+  palettes / 12,059 matrices, 9,336 lighting, 0 shininess), and captures at both
+  ends are pixel-identical. The caches are sentinelled (`0xFFFFFFFF`) and reset
+  at the frame's program bind, so the first batch of a frame is unconditional.
+- **The shininess table split is right but free here.** The 32 uniform words
+  are only re-sent when the table actually changes, counted as
+  `shininess uploads`: **0 in the field**, which means the field never uses the
+  specular table at all. Kept because battle and menu scenes can.
+- **An adjacency batch merge was tried and removed.** Joining contiguous
+  same-state batches into one `C3D_DrawElements` (the obvious lever, since each
+  draw is ~9.7 us) joined **zero** batches in the field and zero in the title
+  scene: `merge joined 0`, and the block was always the material, not the
+  matrix palette (`blocked state 15,093`, `matrices 0`). Every consecutive batch
+  is a different material, so no adjacency key can ever match. Joining draws
+  here needs a union palette plus an index remap and a state-sorted draw order,
+  which is a different (and larger) change.
+- **The main loop is now attributed.** The earlier "~1.9 ms of logic outside
+  the field update" was an artifact of the mixed binary; from one clean build
+  (`NitroPort_ProbeNow` slots in `main.c` and `field_system.c`):
 
-### The field is still blocked in the front end
+  | probe | covers | us per game frame |
+  |---|---|---|
+  | slot 0 | whole `HandleInputsEventsAndProcesses` | 2419 |
+  | slot 1 | `HandleFieldInput` | 236 |
+  | slot 2 | `FieldTask_Run` + Poketch event | 47 |
+  | slot 3 | `ApplicationManager_Exec` of `gFieldMapTemplate` | 2132 |
+  | slot 4 | `CommSys_Update` + `RunApplication` + main/print tasks | 2576 |
+  | slot 5 | RTC, playtime, `sub_020241CC` (G3 swap), print tasks | 5 |
+  | slot 6 | post-V-blank: brightness, fade, vblank cb, sound, post tasks | 67 |
 
-Not LOTUS and not the decompilation: the game is stuck inside overlay `0x4D`
-(`game_opening`), not ignoring input.
+  The map app is 2132 of the 2419 us field update and 50% of the 4299 us logic.
+  Everything the main loop does around it is ~230 us; the one part still not in
+  a window is ~1.6 ms of timer/frame-pacing overhead around the probes, which
+  `[pace]` and `[gamecpu]` cover rather than the probes. The probe slots were
+  removed from the game sources after this reading (they are a debug build
+  facility, not part of the game).
+- **Inside the map app, all of it is 3D scene submission.** A second probe pass
+  (`overlay005/fieldmap.c`, `ov5_021D134C` = slot 0, its children 1-5, and
+  `ov5_021D15F4` = 10 with children 6-9) puts 1874 of the 2132 us in the per-frame
+  map tick, and 1862 of that in the 3D scene build:
 
-- The real START edge reaches the guest: `lotus_input` `buttons = 0x400`
-  produces `[input] pad 0008`, and guest memory shows
-  `gSystem.heldKeysRaw = 0x8`, `pressedKeysRaw = 0x8`.
-- Live state read through `lotus_read_memory`: `sApplication.currOverlayID =
-  0x4D`, `currApplication->execState = 2` (MAIN), `procState = 4`,
-  `nextOverlayID = NONE`, `nextApplication = NULL`. No `d_startmenu` or title
-  overlay is ever enqueued.
-- `ov77_021D25B0.c` case 4 returns as soon as `unk_04 >= 2430` frames. The run
-  reached 350 s (about 21,000 frames) with dozens of START edges. Either that
-  counter is not advancing or the app data is corrupt: the field where
-  `unk_04` should be read back as a pointer-like value (`0xC4C244`), while
-  `heapID` at data+0 is the correct 30.
-- `CommSys_Update()` returns TRUE unconditionally, so the game's application
-  update is not gated by the unimplemented `DWC_Init`.
-- Earlier "live input does nothing" tests were invalid for two separate
-  reasons, both now documented: scripted input owns the pad, and
-  `lotus_input`'s START bit is `0x400` (sending `0x8` presses Y).
+  | probe | covers | us per game frame |
+  |---|---|---|
+  | 0 | `ov5_021D134C`, the whole map-app tick | 1874 |
+  | 1 | `sub_020559DC` (RTC and game time) | 1 |
+  | 2 | area light + signpost | 3 |
+  | 3 | texture free + prop animation advance | 2 |
+  | 4 | `LandDataManager_Tick` | 1 |
+  | 5 | `ov5_021D15F4`, the scene build | 1862 |
+  | 6 | `G3_ResetG3X` + camera view matrix | 9 |
+  | 7 | `LandDataManager_RenderLoadedMaps` (terrain) | 761 |
+  | 8 | `MapPropManager_Render2` (props) | 2 |
+  | 9 | field effects + billboard lists + projection restore | 1084 |
+  | 10 | `ov5_021D15F4` total (6+7+8+9 + emit/swap) | 1860 |
 
-Next for this: GDB on overlay 77 with overlay symbols, log `unk_04` and
-`param1` once per V-blank and whether `main` is entered, and run stock
-pokeplatinum in melonDS with the same save to confirm the state machine
-leaves the opening. If `main` runs and the counter is garbage, treat it as
-heap/struct corruption in the port.
+  The surprise is the shape: terrain is 761 us, props are 2 us, and the
+  **billboard and effect draw is 1084 us** — the largest single slice of the
+  frame after the map tick itself. Those are DS-side quads submitted one list
+  at a time for pop-in objects and field effects, so the next step is to split
+  `FieldEffectManager_Render` from `BillboardLists_Draw` rather than to touch
+  the terrain path. `MapPropManager_Render2` being 2 us also rules out the
+  props as a target, which the fifth pass had suspected.
+- **The harness can silently record the wrong screen.** One run's window was a
+  still of the journal (0 draws, `same scene 600`, no probe line) because the
+  third `lotus_input` was swallowed; `field_run.py` now presses START until the
+  engine logs `[menu] field lower screen on` and fills the same 600-frame settle,
+  so the windows still start on the same pictures. The lesson is in
+  `docs/LESSONS.md`.
 
 ## Implemented
 
@@ -523,14 +555,15 @@ create, run, capture and stop sessions. Both build profiles can run at once.
    DS state against a DS emulator's own picture of the same save. The offline
    2D and 3D oracles agree with the port on the sub-rectangle, so the next
    question is whether the *state* is right, not the GPU path.
-8. After that, the field's remaining costs in order (sixth pass): the map app
-   itself ~2.1 ms (player, objects, map, G3 submission — the single biggest
-   block; nothing inside it is split yet), H-blank walk ~366 us, g3d 832 us for
-   26 batches of ~22 triangles (palette uploads and TEV/texture state per
-   batch; a union-palette draw join is the only way to cut the draw count),
-   g2d 501 us, and the ~250 us of publish outside its stages. Nothing is near
-   the 33 ms frame budget yet, so prefer measured work removal over
-   restructuring.
+8. After that, the field's remaining costs in order (sixth pass): the field
+   effects and billboard lists inside the map app, **1084 us** (the largest
+   single slice; split `FieldEffectManager_Render` from `BillboardLists_Draw`
+   first — these are DS-side quad lists submitted per frame), then the terrain
+   render 761 us, the H-blank walk ~366 us, g3d 832 us for 26 batches of ~22
+   triangles (palette uploads and TEV/texture state per batch; a union-palette
+   draw join is the only way to cut the draw count), g2d 501 us, and the
+   ~250 us of publish outside its stages. Nothing is near the 33 ms frame
+   budget yet, so prefer measured work removal over restructuring.
 
 ## Deliberately not planned (O3DS)
 

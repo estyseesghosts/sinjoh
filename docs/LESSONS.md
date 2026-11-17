@@ -348,3 +348,27 @@ re-ran (g3d 832 us, captures pixel-identical to the pre-change baseline).
 **Transferable.** When an optimization changes control flow, the revert is a
 control-flow change too. Diff the loop header, not just the body, and re-run
 the same capture comparison rather than trusting the absence of a crash.
+
+## A field run that never reached the field still prints a full window
+
+**Symptom.** A map-app probe run printed a complete 600-frame window with
+`[perf]`, `[gpu]` and `[ds]` lines: g3d 0 us, `2D screens skipped 1200`,
+`layers reused 3000 rebuilt 0`, `3D batches 0`, `g3 Fifo calls 0`, and no
+`[probe]` line. Every engine counter was internally consistent; the window was
+a still picture. The capture showed the journal screen.
+
+**Cause.** The harness sends three presses (START, A, START) at fixed frame
+offsets. Only the first two arrived (`[input] pad 0008` then `0001`; the log
+prints DS keypad bits, so 0x8 is START and 0x1 is A); the third `lotus_input`
+did not take, so the journal — which closes on START, never on A — stayed open
+for the recorded windows.
+
+**Fix.** Re-ran the same harness on the same binary; the second run reached the
+field and printed the 3D counters and the probe slots.
+
+**Transferable.** A window of zeros is not a measurement of "nothing ran"; it is
+usually a measurement of the wrong screen. Before reading any number, check what
+the run was showing: `[gpu] 3D batches 0` with `[scene] same scene 600` and a
+capture of a menu is a harness failure, not a sample of a field that does no 3D
+work. Take the capture from the same window the numbers come from.
+

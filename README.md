@@ -29,13 +29,20 @@ work flat.
 
 ## Status
 
-Foundation. The engine is in place under `engine/`; the game source, the
-NitroSDK and NitroSystem decompilations bootstrap reproducibly; the LOTUS MCP
-harness drives windowed sessions. The game-side patch stack and the
-engine/game link are the current work (see `docs/STATUS.md`).
+Boots the retail game through title, opening and save load into the field, with
+both screens filled and the lower-screen remaster menu live. The 2D and 3D
+paths are GPU-native, the field is a measured steady state (windowed LOTUS,
+600-picture windows, `[perf]`/`[gpu]`/`[ds]` counters), and the last passes have
+been work removal rather than feature work: a display-list cache, retained
+band quads, a keystream cache for the Pokemon cipher, per-batch 3D state
+filtering, and a decoded-ADPCM cache. `docs/STATUS.md` has the numbers;
+`docs/ARCHITECTURE.md` explains how a frame is put together and how to measure
+one.
 
 Nothing here is certified on O3DS hardware. LOTUS and Azahar are integration
-debuggers, not timing authorities.
+debuggers, not timing authorities; only counts of work removed transfer to the
+stock console. The field's framing, the 3D wide camera and the lower menu's
+apps are the open correctness items.
 
 ## Layout
 

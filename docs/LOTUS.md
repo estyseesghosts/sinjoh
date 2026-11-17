@@ -112,6 +112,21 @@ python tools/lotus/run_sinjoh.py --asset sinjoh-dbg --frames 600 --keep
 the session running until the client exits. The process owns the session, so
 the run ends when the client does.
 
+For a repeatable steady state, `tools/lotus/field_run.py` drives the title into
+the field and records whole 600-picture windows from the standing field:
+
+```sh
+python tools/lotus/field_run.py --asset sinjoh-dbg --windows 2 --out build/lotus/field_now
+```
+
+It creates the session, runs the title (6600 frames), presses START, A
+(Continue), START, then records each window and saves `top.png`/`bottom.png` for
+the last one. The second START is the journal's: it turns pages on A/left/right
+and closes on START or B at page 0 (`journal_controller.c`), so a one-page save
+looks frozen if you keep pressing A. Windows land on the same picture numbers
+every run, which is what makes two builds comparable: capture the same picture
+in both, diff with `ImageChops`, and expect `bbox None`.
+
 A primary card's guest SD is
 `<lotus>/data/citnlo/sessions/cards/<card>/sdmc/`; sinjoh reads
 `sdmc:/3ds/sinjoh/`, so `stage_card.py` writes
