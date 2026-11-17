@@ -122,8 +122,9 @@ in `docs/LESSONS.md`. The short version:
 
 ## 2026-11-16 fourth pass: geometry FIFO and retained band quads
 
-Instrumented runs (`sinjoh-2f56f3e01fd8-dbg`) in the same windowed LOTUS
-session, title/opening sequence, 600-frame windows.
+Instrumented runs (starting at `sinjoh-2f56f3e01fd8-dbg`; final build
+`sinjoh-f8a26377d618-dbg`) in the same windowed LOTUS session, title/opening
+sequence, 600-frame windows.
 
 - **The display-list cache was not working; the cause was the SDK's 118-word
   GX FIFO bursts.** `[dlcov]` put every word in `split`/`open-begin`, `[dltop]`
@@ -157,6 +158,35 @@ session, title/opening sequence, 600-frame windows.
   frame now matches at 172 and 371 by pixel sampling.
 - A debug-only `[input]` line now logs the pad word whenever it changes, which
   is how the LOTUS `lotus_input` bit mapping was checked.
+
+### The field is still blocked in the front end
+
+Not LOTUS and not the decompilation: the game is stuck inside overlay `0x4D`
+(`game_opening`), not ignoring input.
+
+- The real START edge reaches the guest: `lotus_input` `buttons = 0x400`
+  produces `[input] pad 0008`, and guest memory shows
+  `gSystem.heldKeysRaw = 0x8`, `pressedKeysRaw = 0x8`.
+- Live state read through `lotus_read_memory`: `sApplication.currOverlayID =
+  0x4D`, `currApplication->execState = 2` (MAIN), `procState = 4`,
+  `nextOverlayID = NONE`, `nextApplication = NULL`. No `d_startmenu` or title
+  overlay is ever enqueued.
+- `ov77_021D25B0.c` case 4 returns as soon as `unk_04 >= 2430` frames. The run
+  reached 350 s (about 21,000 frames) with dozens of START edges. Either that
+  counter is not advancing or the app data is corrupt: the field where
+  `unk_04` should be read back as a pointer-like value (`0xC4C244`), while
+  `heapID` at data+0 is the correct 30.
+- `CommSys_Update()` returns TRUE unconditionally, so the game's application
+  update is not gated by the unimplemented `DWC_Init`.
+- Earlier "live input does nothing" tests were invalid for two separate
+  reasons, both now documented: scripted input owns the pad, and
+  `lotus_input`'s START bit is `0x400` (sending `0x8` presses Y).
+
+Next for this: GDB on overlay 77 with overlay symbols, log `unk_04` and
+`param1` once per V-blank and whether `main` is entered, and run stock
+pokeplatinum in melonDS with the same save to confirm the state machine
+leaves the opening. If `main` runs and the counter is garbage, treat it as
+heap/struct corruption in the port.
 
 ## Implemented
 
@@ -358,9 +388,14 @@ create, run, capture and stop sessions. Both build profiles can run at once.
    ~28 ms of headroom per frame, so cost removal there is not justified by
    data yet. Then a real-hardware pass with `docs/HARDWARE.md` and the staged
    card (`build/sinjoh-platinum-sd.zip`).
-7. Visual pass for the fourth pass: the retained edge/wide-art quads and the
-   one-transfer GX path were measured while the host desktop was locked, so
-   the bands, screen edges and a field scene still need a picture.
+7. Front-end progression, which now blocks field verification: overlay `0x4D`
+   (`game_opening`) stays in MAIN/procState 4 and never enqueues the title.
+   Instrument `ov77_021D2D94` (is it called, does `unk_04` advance?), then
+   compare with stock pokeplatinum in melonDS on the same save. Do this before
+   any further field measurement.
+8. After the front end moves: field steady state with the `snowpoint.sav`
+   save (hand-driven input works now; `stage_card.py` without `--script`), and
+   the visual pass on the retained bands, screen edges and a field scene.
 
 ## Deliberately not planned (O3DS)
 

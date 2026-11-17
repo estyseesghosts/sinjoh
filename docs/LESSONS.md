@@ -59,6 +59,57 @@ That proved the DS state was right and localised the fault to the engine.
 **Transferable.** Build the oracle before the theory. It is cheaper than one
 more speculative change, and it is reusable for the next visual bug.
 
+## The wide bands went white only on the retained path
+
+**Symptom.** The 40-pixel side bands on the top screen were pure white on the
+copyright screen. A build from before the retention change was correct, and
+the same frame was sometimes correct afterwards, so it looked intermittent.
+
+**Cause.** The new retained edge/band vertex buffers were allocated with
+`malloc`, while the layer's own retained quads use `linearAlloc`. The PICA
+reads the vertex buffer from the address it is given; heap memory was stale, so
+the bands drew nothing and the target's white clear showed through. Frames that
+took the per-span path still used the arena (`linearAlloc`) and were correct,
+which is why it was path-dependent rather than random.
+
+**Fix.** `engine/graphics/g2d/g2d.c` `art_alloc`: allocate `lc->edge` and
+`lc->band` with `linearAlloc`. Commit `f8a2637`.
+
+**Evidence.** At frame 172 the capture is pixel-identical to the pre-change
+build (`ImageChops` difference bounding box empty); frames 172 and 371 both
+sample the band colour `(99, 33, 33)` at x=5/20/39 instead of white.
+
+**Transferable.** Any buffer whose address is handed to the GPU must be
+`linearAlloc` (or explicitly flushed), not heap memory. When a visual fault
+looks intermittent, check whether it tracks a *code path* (retained vs
+per-span, arena vs cache) before suspecting a race. A fixed-frame pixel diff
+against the previous build is the fastest oracle.
+
+## "The game ignores input" was the harness's button order
+
+**Symptom.** Pressing START on the title/opening never advanced the game.
+Scripted presses did nothing, and live presses appeared to do nothing.
+
+**Cause, part one.** `lotus_input`'s `buttons` is a bitmask in LOTUS's
+`NativeButton` order (A 1, B 2, X 4, Y 8, Up 16, Down 32, Left 64, Right 128,
+L 256, R 512, Start 1024, Select 2048), not the DS/libctru order. Sending `8`
+pressed Y. The engine and game were fine; the debug `[input]` log showed
+`pad 0800`, and `0x400` produced `pad 0008`.
+
+**Cause, part two.** While a `script.txt` is staged, `kj_script_input` answers
+every frame, so live input is ignored by design. Earlier live-input tests ran
+against a script and proved nothing.
+
+**Fix.** Documented both in `docs/LOTUS.md`; added the profile-only
+`[input] pad xxxx` edge log in `engine/runtime/kj_frame.c`. Commit `f8a2637`.
+
+**Evidence.** `gSystem.heldKeysRaw = 0x8` and `pressedKeysRaw = 0x8` in guest
+memory on a real START edge, read through `lotus_read_memory`.
+
+**Transferable.** Verify the whole input path (harness mapping → engine
+mapping → guest register → `gSystem`) before blaming the game. One
+guest-memory read of `gSystem` settles it.
+
 ## GDB read the IO registers one halfword off
 
 **Symptom.** A GDB session "proved" blend values that produced the wrong
