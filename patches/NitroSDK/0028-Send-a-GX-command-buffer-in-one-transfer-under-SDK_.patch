@@ -1,0 +1,40 @@
+From 0d3fdf1a6c9f4f6ba0e3af6f0a2c0f8f0a1b2c3d Mon Sep 17 00:00:00 2001
+From: terezi <jules@foxtails.me>
+Date: Mon, 16 Nov 2026 20:10:00 -0500
+Subject: [PATCH] mi: send a GX command buffer in one transfer under
+ SDK_PORT_3DS
+
+The DS geometry FIFO holds 128 words, so MI_SendGXCommand(Async) cuts a
+command buffer into 118-word DMA bursts paced by the half-empty interrupt.
+The port's FIFO is unbounded: one transfer delivers the same words in the
+same order with the same callback, removes ~100 interrupt round trips a
+frame, and lets the port recognise identical display lists.
+
+Ported from kohjoh patch 2003. The only difference is the file's location
+in this checkout (libraries/mi/src) and the surrounding #ifdef SDK_ARM9.
+---
+ libraries/mi/src/mi_dma_gxcommand.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/libraries/mi/src/mi_dma_gxcommand.c b/libraries/mi/src/mi_dma_gxcommand.c
+index eca7b11..852e937 100644
+--- a/libraries/mi/src/mi_dma_gxcommand.c
++++ b/libraries/mi/src/mi_dma_gxcommand.c
+@@ -3,7 +3,15 @@
+ 
+ #include "../include/mi_dma.h"
+ 
++#ifdef SDK_PORT_3DS
++// The port's geometry FIFO has no capacity limit, so a command buffer goes
++// out in one transfer instead of 118-word bursts paced by the half-empty
++// interrupt. Same words, same order, same completion callback; one call per
++// buffer lets the port retain identical display lists (kohjoh 2003).
++#define MIi_GX_LENGTH_ONCE  (0x1FFFF * sizeof(u32))
++#else
+ #define MIi_GX_LENGTH_ONCE  (118 * sizeof(u32))
++#endif
+ 
+ typedef struct {
+ 	volatile BOOL isBusy;
+-- 
+2.56.0.windows.4

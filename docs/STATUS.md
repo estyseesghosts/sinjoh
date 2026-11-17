@@ -120,6 +120,37 @@ in `docs/LESSONS.md`. The short version:
   bedroom's rival encounter invalidated the outdoor walk schedule; the run was
   killed and the wide 3D left marked unverified rather than claimed.
 
+## 2026-11-16 fourth pass: geometry FIFO and retained band quads
+
+Instrumented runs (`sinjoh-2f56f3e01fd8-dbg`) in the same windowed LOTUS
+session, title/opening sequence, 600-frame windows.
+
+- **The display-list cache was not working; the cause was the SDK's 118-word
+  GX FIFO bursts.** `[dlcov]` put every word in `split`/`open-begin`, `[dltop]`
+  reported 0 hits and `[ds]` reported 600 replayed, 0 decoded, 1200
+  uncacheable. Ported kohjoh's patch 2003 as
+  `patches/NitroSDK/0028-...-one-transfer-under-SDK_.patch`: under
+  `SDK_PORT_3DS`, `MIi_GX_LENGTH_ONCE` is `0x1FFFF * sizeof(u32)`, so a
+  command buffer goes out in one DMA transfer instead of bursts paced by the
+  half-empty interrupt. The FIFO is unbounded in the port, so the words, order
+  and completion callback are unchanged. After it, the same boot reports
+  11,999 replayed / 137 decoded / 0 uncacheable in the 40 s window, 23,006 /
+  47 / 0 at 60 s, and `[dlcov] words hit 11.2 M` against 583 k `short`.
+- **The edge and wide-art band quads were rebuilt every frame even when their
+  layer was retained.** `prepare_span` called `edge_band_quads` and
+  `band_quads` unconditionally, so the steady state did 192 atlas lookups per
+  frame with `layers reused 3600 rebuilt 0`. They are functions of the same
+  registers and art as the layer, so `layer_cache` now keeps them (`edge`,
+  `band`, `art_valid`, `art_screen`) and `art_quads` reuses them until the
+  layer is rebuilt or changes screen. Measured on the same timeline: atlas
+  lookups fell from 65,328 to 14,784 per 600 frames at 20 s and from 36,096 to
+  9,408 at 40 s; `g2d` p50 fell from 563 to 476 us and `publish` from 635 to
+  527 us at 20 s.
+- **Not visually verified.** The host desktop locked during the pass and
+  LOTUS captures are white while it is locked (confirmed with a window grab
+  the previous pass). The counters are the evidence here; a visual pass on the
+  wide bands and screen edges is still owed.
+
 ## Implemented
 
 - New repository layout: `engine/` (kohjoh's runtime and renderer),
@@ -320,6 +351,9 @@ create, run, capture and stop sessions. Both build profiles can run at once.
    ~28 ms of headroom per frame, so cost removal there is not justified by
    data yet. Then a real-hardware pass with `docs/HARDWARE.md` and the staged
    card (`build/sinjoh-platinum-sd.zip`).
+7. Visual pass for the fourth pass: the retained edge/wide-art quads and the
+   one-transfer GX path were measured while the host desktop was locked, so
+   the bands, screen edges and a field scene still need a picture.
 
 ## Deliberately not planned (O3DS)
 

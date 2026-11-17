@@ -1064,9 +1064,8 @@ static uint64_t bg_art_key(const ctx *c, int bg)
  * continues the picture's border, window frame or fade instead of showing
  * the backdrop. Atlas work only: no readback, no per-pixel CPU path.
  */
-static void edge_band_quads(const ctx *c, int bg, uint32_t *first, uint32_t *count)
+static void edge_band_quads(const ctx *c, int bg, kj_v2d *v, uint32_t cap, uint32_t *count)
 {
-    *first = 0;
     *count = 0;
     if (c->screen != KJ_SCREEN_TOP || bg < 0 || bg > 3) {
         return;
@@ -1109,8 +1108,7 @@ static void edge_band_quads(const ctx *c, int bg, uint32_t *first, uint32_t *cou
     if (rows == 0) {
         return;
     }
-    kj_v2d *v = kj_gpu_quads_alloc(rows * 2u, first);
-    if (v == NULL) {
+    if (rows * 2u > cap) {
         return;
     }
     uint32_t n = 0;
@@ -1259,15 +1257,10 @@ static void put_band_quad(kj_v2d *v, int x, int y, int w, int h, int tx, int ty)
  * where they meet. What is left of the canvas's band is the picture's
  * middle: the game's own, which the layer draws itself.
  */
-static void band_quads(const kj_wideart_pic *pic, int dx, drawable *out)
+static void band_quads(const kj_wideart_pic *pic, int dx, kj_v2d *v, uint32_t cap, uint32_t *count)
 {
-    uint32_t first;
-    kj_v2d *v;
-
-    out->base = NULL;
-    out->count = 0;
-    v = kj_gpu_quads_alloc(2, &first);
-    if (v == NULL) {
+    *count = 0;
+    if (cap < 2) {
         return;
     }
     const int bh = pic->band_h;
@@ -1297,8 +1290,7 @@ static void band_quads(const kj_wideart_pic *pic, int dx, drawable *out)
         ++n;
     }
 
-    out->first = first;
-    out->count = n;
+    *count = n;
 }
 
 /*
@@ -1339,6 +1331,10 @@ static const kj_wideart_pic *layer_picture(const ctx *c, int bg, uint64_t key, i
 
 #define CACHE_QUADS 2304u
 #define MAP_MAX 8192u
+/* The edge bands: one 32x8 quad per 8-line row on each side of a 192-line
+ * screen. The wide art: at most two bands. */
+#define EDGE_QUADS 48u
+#define BAND_QUADS 2u
 
 typedef struct layer_cache {
     bool valid;
@@ -1354,6 +1350,12 @@ typedef struct layer_cache {
     kj_v2d *quads;
     uint16_t slots[CACHE_QUADS];
     uint32_t count;
+    /* The layer's edge and wide-art band quads, retained beside it: they are
+     * built from the same registers and art as the layer's own quads. */
+    kj_v2d *edge, *band;
+    uint32_t edge_count, band_count;
+    int art_screen;    /* the edge and wide art depend on which screen this is */
+    bool art_valid;
     /* OBJ: per (priority, semi) sub-ranges of quads */
     uint32_t sub_first[8], sub_count[8];
     uint8_t oam[0x400];
@@ -1474,6 +1476,7 @@ static bool text_bg_retained(const ctx *c, int bg, drawable *out, uint64_t *art_
     if (!cache_alloc(lc)) {
         return false;
     }
+    lc->art_valid = false;
     run r;
     memset(&r, 0, sizeof(r));
     r.ext = true;
@@ -1503,6 +1506,45 @@ static bool text_bg_retained(const ctx *c, int bg, drawable *out, uint64_t *art_
     out->count = r.count;
     ++s_rebuilt_layers;
     return true;
+}
+
+/* The layer's edge and wide-art band quads, retained beside the layer's own
+ * quads: they are built from exactly the same registers and art, so they are
+ * rebuilt only when the layer is. */
+static bool art_alloc(layer_cache *lc)
+{
+    if (lc->edge == NULL) {
+        lc->edge = malloc(EDGE_QUADS * 4u * sizeof(kj_v2d));
+    }
+    if (lc->band == NULL) {
+        lc->band = malloc(BAND_QUADS * 4u * sizeof(kj_v2d));
+    }
+    return lc->edge != NULL && lc->band != NULL;
+}
+
+static void art_quads(const ctx *c, int bg, layer_cache *lc, uint64_t art_key,
+                      drawable *edge, drawable *band)
+{
+    if (!lc->art_valid || lc->art_key != art_key || lc->art_screen != c->screen) {
+        lc->art_key = art_key;
+        lc->art_screen = c->screen;
+        edge_band_quads(c, bg, lc->edge, EDGE_QUADS, &lc->edge_count);
+        lc->band_count = 0;
+        if (wide_art_on(c)) {
+            log_art_key(c, bg, art_key);
+            int dx = 0;
+            const kj_wideart_pic *pic = layer_picture(c, bg, art_key, &dx);
+            if (pic != NULL) {
+                band_quads(pic, dx, lc->band, BAND_QUADS, &lc->band_count);
+                log_band(c, bg, art_key, dx);
+            }
+        }
+        lc->art_valid = true;
+    }
+    edge->base = lc->edge;
+    edge->count = lc->edge_count;
+    band->base = lc->band;
+    band->count = lc->band_count;
 }
 
 /* The OBJ layer (all priorities), retained when possible. */
@@ -1628,8 +1670,11 @@ static void prepare_span(const ctx *c, bool retain, prepared *pr)
 #endif
             continue;
         }
+        bool art_kept = false;
+        layer_cache *lc = &s_bg_cache[c->engine][bg];
         if (!affine && !ext16 && retain) {
             pr->bg_ok[bg] = text_bg_retained(c, bg, &pr->bg[bg], &pr->bg_key[bg]);
+            art_kept = pr->bg_ok[bg] && art_alloc(lc);
         } else {
             run r;
             memset(&r, 0, sizeof(r));
@@ -1650,20 +1695,34 @@ static void prepare_span(const ctx *c, bool retain, prepared *pr)
             }
             ++s_rebuilt_layers;
         }
-        if (pr->bg_ok[bg]) {
+        if (art_kept) {
+            art_quads(c, bg, lc, pr->bg_key[bg], &pr->bg_edge[bg], &pr->bg_band[bg]);
+        } else if (pr->bg_ok[bg]) {
             uint32_t ef, ec;
-            edge_band_quads(c, bg, &ef, &ec);
-            pr->bg_edge[bg].base = NULL;
-            pr->bg_edge[bg].first = ef;
-            pr->bg_edge[bg].count = ec;
+            const uint32_t rows =
+                (uint32_t)((((c->y1 + 7) & ~7) - (c->y0 & ~7)) / 8);
+            kj_v2d *ev = rows != 0 ? kj_gpu_quads_alloc(rows * 2u, &ef) : NULL;
+            if (ev != NULL) {
+                edge_band_quads(c, bg, ev, rows * 2u, &ec);
+                pr->bg_edge[bg].base = NULL;
+                pr->bg_edge[bg].first = ef;
+                pr->bg_edge[bg].count = ec;
+            }
         }
-        if (pr->bg_ok[bg] && wide_art_on(c)) {
+        if (!art_kept && pr->bg_ok[bg] && wide_art_on(c)) {
             log_art_key(c, bg, pr->bg_key[bg]);
             int dx = 0;
             const kj_wideart_pic *pic = layer_picture(c, bg, pr->bg_key[bg], &dx);
             if (pic != NULL) {
-                band_quads(pic, dx, &pr->bg_band[bg]);
-                log_band(c, bg, pr->bg_key[bg], dx);
+                uint32_t bf, bc;
+                kj_v2d *bv = kj_gpu_quads_alloc(BAND_QUADS, &bf);
+                if (bv != NULL) {
+                    band_quads(pic, dx, bv, BAND_QUADS, &bc);
+                    pr->bg_band[bg].base = NULL;
+                    pr->bg_band[bg].first = bf;
+                    pr->bg_band[bg].count = bc;
+                    log_band(c, bg, pr->bg_key[bg], dx);
+                }
             }
         }
 #ifndef HGSS_PROFILE_OFF
