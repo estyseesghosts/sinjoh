@@ -1,5 +1,12 @@
 # Status
 
+2026-11-18: scripted-input handoff, transparent-tile invalidation and the
+blend-pass ordering were repaired. Release and profile builds and the native
+checks passed. A LOTUS retest converted a locally wrapped packed save with an
+existing `.orig`, then saved and reloaded it in gameplay. See the
+[repair worklog](worklog/2026-11-18-resumed-repairs.md) for the tested scope
+and remaining gates. **O3DS_UNTESTED** for this pass.
+
 Verified 2026-11-16, Old 3DS profile in Azahar 2126.2 and in windowed LOTUS
 v0.0.3 (CITnLO worker, Vulkan renderer). "Implemented", "built", "ran" and
 "verified" are separate facts; this file keeps them apart.
