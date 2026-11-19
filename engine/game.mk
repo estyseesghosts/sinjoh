@@ -220,19 +220,19 @@ $(NNS_INLINE_SYMS): | libs
 $(OUT)/src/%.o: $(GAME)/src/%.c $(NNS_INLINE_SYMS) $(GAME_GENERATED) | libs
 	@mkdir -p $(dir $@)
 	@echo "  GAME CC $(notdir $<)"
-	@$(CC) $(GAME_CFLAGS) -c $< -o $@
+	@MSYS2_ARG_CONV_EXCL="$(MSYS2_ARG_CONV_EXCL);-MQ" $(CC) $(GAME_CFLAGS) -MMD -MP -MQ"$@" -c $< -o $@
 	@$(WEAKEN_NNS_INLINE)
 
 $(OUT)/lib/%.o: $(GAME)/lib/%.c $(NNS_INLINE_SYMS) $(GAME_GENERATED) | libs
 	@mkdir -p $(dir $@)
 	@echo "  GAME CC lib/$*.c"
-	@$(CC) $(GAME_CFLAGS) -I$(dir $<) -c $< -o $@
+	@MSYS2_ARG_CONV_EXCL="$(MSYS2_ARG_CONV_EXCL);-MQ" $(CC) $(GAME_CFLAGS) -I$(dir $<) -MMD -MP -MQ"$@" -c $< -o $@
 	@$(WEAKEN_NNS_INLINE)
 
 $(TRAINER_AI_O): $(GAME)/src/battle/trainer_ai/script.s $(GAME_GENERATED)
 	@mkdir -p $(dir $@)
 	@echo "  GAME AS battle/trainer_ai/script.s"
-	@$(CC) $(filter -m%,$(PORT_CFLAGS)) $(if $(IS_HOST),-Wa$(comma)--noexecstack) \
+	@MSYS2_ARG_CONV_EXCL="$(MSYS2_ARG_CONV_EXCL);-MQ" $(CC) $(filter -m%,$(PORT_CFLAGS)) $(if $(IS_HOST),-Wa$(comma)--noexecstack) -MMD -MP -MQ"$@" \
 	    -I$(GAME)/include -I$(GAME)/asm -I$(CONSTANTS_DIR) -x assembler-with-cpp -c $< -o $@
 
 WIFI_STUBS_C := $(OUT)/gen/wifi_stubs.c
@@ -245,7 +245,7 @@ $(WIFI_STUBS_C): $(GAME_HEADER_DEFS) $(TOOLS)/make_game_wifi_stubs.py
 	@touch $@
 
 $(WIFI_STUBS_O): $(WIFI_STUBS_C)
-	@$(CC) $(PORT_CFLAGS) $(SDK_INCLUDES) -c $< -o $@
+	@MSYS2_ARG_CONV_EXCL="$(MSYS2_ARG_CONV_EXCL);-MQ" $(CC) $(PORT_CFLAGS) $(SDK_INCLUDES) -MMD -MP -MQ"$@" -c $< -o $@
 
 OVERLAY_TABLE_C := $(OUT)/gen/overlay_table.c
 
@@ -348,12 +348,12 @@ ENGINE_CTR_CFLAGS := -std=gnu11 -O2 -g -Wall -Wno-unused-function \
 $(OUT)/ds/%.o: $(ROOT)/%.c | $(FX_CONST_H)
 	@mkdir -p $(dir $@)
 	@echo "  DS  $(<:$(ROOT)/%=%)"
-	@$(CC) $(ENGINE_DS_CFLAGS) -MMD -MP -c $< -o $@
+	@MSYS2_ARG_CONV_EXCL="$(MSYS2_ARG_CONV_EXCL);-MQ" $(CC) $(ENGINE_DS_CFLAGS) -MMD -MP -MQ"$@" -c $< -o $@
 
 $(OUT)/ctr/%.o: $(ROOT)/%.c $(BUILD_ID_H) | $(FX_CONST_H)
 	@mkdir -p $(dir $@)
 	@echo "  CTR $(<:$(ROOT)/%=%)"
-	@$(CC) $(ENGINE_CTR_CFLAGS) -MMD -MP -c $< -o $@
+	@MSYS2_ARG_CONV_EXCL="$(MSYS2_ARG_CONV_EXCL);-MQ" $(CC) $(ENGINE_CTR_CFLAGS) -MMD -MP -MQ"$@" -c $< -o $@
 
 $(OUT)/shaders/%_shbin.o: $(ROOT)/engine/graphics/pica/shaders/%.v.pica
 	@mkdir -p $(dir $@)
@@ -392,7 +392,7 @@ $(PROGRAM_ELF): $(ENGINE_DS_OBJS) $(ENGINE_CTR_OBJS) $(SHADER_OBJS) $(WIDEART_O)
 	    $(OVERLAY_IDS) -lcitro3d -lctru -lm -o $@
 
 $(OUT)/gen/overlay_table.o: $(OVERLAY_TABLE_C) | libs
-	@$(CC) $(PORT_CFLAGS) $(SDK_INCLUDES) -c $< -o $@
+	@MSYS2_ARG_CONV_EXCL="$(MSYS2_ARG_CONV_EXCL);-MQ" $(CC) $(PORT_CFLAGS) $(SDK_INCLUDES) -MMD -MP -MQ"$@" -c $< -o $@
 
 program: $(PROGRAM)
 
@@ -402,4 +402,20 @@ $(PROGRAM): $(PROGRAM_ELF)
 clean:
 	rm -rf $(OUT)
 
--include $(ENGINE_DS_OBJS:.o=.d) $(ENGINE_CTR_OBJS:.o=.d)
+# GCC is a native Windows executable under MSYS. -MQ keeps its dependency
+# target in Make's path spelling; exclude only this option from MSYS argument
+# conversion while leaving compiler inputs and outputs converted normally.
+# The versioned stamp rebuilds old objects whose .d targets used native paths.
+# If a .d file is later lost, force just its object to regenerate it.
+DEP_OBJECTS := $(GAME_OBJS) $(WIFI_STUBS_O) $(OUT)/gen/overlay_table.o \
+               $(ENGINE_DS_OBJS) $(ENGINE_CTR_OBJS)
+DEP_FILES := $(DEP_OBJECTS:.o=.d)
+DEP_STAMP := $(OUT)/.header-deps-v1
+$(DEP_STAMP): $(firstword $(MAKEFILE_LIST)) $(ROOT)/engine/compat/common.mk
+	@mkdir -p $(dir $@)
+	@touch $@
+$(DEP_OBJECTS): $(DEP_STAMP)
+.PHONY: missing-dependency-file
+missing-dependency-file:
+$(patsubst %.d,%.o,$(filter-out $(wildcard $(DEP_FILES)),$(DEP_FILES))): missing-dependency-file
+-include $(wildcard $(DEP_FILES))

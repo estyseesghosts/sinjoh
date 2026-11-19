@@ -106,7 +106,7 @@ $(GEN)/nns_all_headers.c: $(NNS_HEADERS) $(ROOT)/tools/game/nns_inline_symbols.p
 	@python3 $(ROOT)/tools/game/nns_inline_symbols.py $@
 
 $(GEN)/nns_all_headers.o: $(GEN)/nns_all_headers.c | libnitro
-	@$(CC) $(CFLAGS) -c $< -o $@
+	@MSYS2_ARG_CONV_EXCL="$(MSYS2_ARG_CONV_EXCL);-MQ" $(CC) $(CFLAGS) -MMD -MP -MQ"$@" -c $< -o $@
 
 # Replaced only when the list changes: every object of NitroSystem and the
 # game depends on it, so a rewrite with the same names would rebuild them all.
@@ -118,7 +118,7 @@ $(NNS_INLINE_SYMS): $(GEN)/nns_all_headers.o
 $(OUT)/nns/%.o: $(NNS)/libraries/%.c $(NNS_INLINE_SYMS) | libnitro
 	@mkdir -p $(dir $@)
 	@echo "  CC  $(notdir $<)"
-	@$(CC) $(CFLAGS) -c $< -o $@
+	@MSYS2_ARG_CONV_EXCL="$(MSYS2_ARG_CONV_EXCL);-MQ" $(CC) $(CFLAGS) -MMD -MP -MQ"$@" -c $< -o $@
 	@$(WEAKEN_NNS_INLINE)
 
 $(LIB): $(NNS_OBJS)
@@ -130,7 +130,7 @@ $(LIB): $(NNS_OBJS)
 TEST_BIN := $(OUT)/test_nitrosystem
 
 $(OUT)/test_nitrosystem.o: tests/test_nitrosystem.c $(NNS_INLINE_SYMS)
-	$(CC) $(CFLAGS) -c $< -o $@
+	MSYS2_ARG_CONV_EXCL="$(MSYS2_ARG_CONV_EXCL);-MQ" $(CC) $(CFLAGS) -MMD -MP -MQ"$@" -c $< -o $@
 	@$(WEAKEN_NNS_INLINE)
 
 $(TEST_BIN): $(OUT)/test_nitrosystem.o $(LIB) $(LIBNITRO)
@@ -142,3 +142,16 @@ test: $(TEST_BIN)
 
 clean:
 	rm -rf build
+
+# Rebuild pre-dependency objects once; recover a missing dependency file later.
+DEP_OBJECTS := $(NNS_OBJS) $(GEN)/nns_all_headers.o $(OUT)/test_nitrosystem.o
+DEP_FILES := $(DEP_OBJECTS:.o=.d)
+DEP_STAMP := $(OUT)/.header-deps-v1
+$(DEP_STAMP): $(firstword $(MAKEFILE_LIST)) $(ROOT)/engine/compat/common.mk
+	@mkdir -p $(dir $@)
+	@touch $@
+$(DEP_OBJECTS): $(DEP_STAMP)
+.PHONY: missing-dependency-file
+missing-dependency-file:
+$(patsubst %.d,%.o,$(filter-out $(wildcard $(DEP_FILES)),$(DEP_FILES))): missing-dependency-file
+-include $(wildcard $(DEP_FILES))

@@ -253,35 +253,31 @@ $(GEN)/nitro/fx/fx_const.h: $(SDK)/gen/nitro/fx/fx_const.csv $(SDK)/gen/nitro/fx
 $(OUT)/sdk/%.o: $(SDK)/libraries/%.c $(GEN)/nitro/fx/fx_const.h
 	@mkdir -p $(dir $@)
 	@echo "  CC  $(notdir $<)"
-	@$(CC) $(CFLAGS) -c $< -o $@
+	@MSYS2_ARG_CONV_EXCL="$(MSYS2_ARG_CONV_EXCL);-MQ" $(CC) $(CFLAGS) -MMD -MP -MQ"$@" -c $< -o $@
 
 $(OUT)/port/%.o: src/%.c $(GEN)/nitro/fx/fx_const.h
 	@mkdir -p $(dir $@)
 	@echo "  CC  $(notdir $<)"
-	@$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
-
-# The port's sources rebuilt when a header they include changes (a struct
-# that changes size must not leave objects built with the old one).
--include $(PORT_OBJS:.o=.d)
+	@MSYS2_ARG_CONV_EXCL="$(MSYS2_ARG_CONV_EXCL);-MQ" $(CC) $(CFLAGS) -MMD -MP -MQ"$@" -c $< -o $@
 
 # The 3DS platform layer uses libctru (and none of the SDK's headers).
 DEVKITPRO ?= /opt/devkitpro
 $(OUT)/port/platform/3ds.o: src/platform/3ds.c src/port_platform.h
 	@mkdir -p $(dir $@)
 	@echo "  CC  platform/3ds.c"
-	@$(CC) $(PORT_CFLAGS) -I$(DEVKITPRO)/libctru/include -c $< -o $@
+	@MSYS2_ARG_CONV_EXCL="$(MSYS2_ARG_CONV_EXCL);-MQ" $(CC) $(PORT_CFLAGS) -I$(DEVKITPRO)/libctru/include -MMD -MP -MQ"$@" -c $< -o $@
 
 $(PAK_READER_OBJ): ../pak/src/pak.c ../pak/include/pak.h
 	@mkdir -p $(dir $@)
 	@echo "  CC  libpak reader"
-	@$(CC) $(CFLAGS) -c $< -o $@
+	@MSYS2_ARG_CONV_EXCL="$(MSYS2_ARG_CONV_EXCL);-MQ" $(CC) $(CFLAGS) -MMD -MP -MQ"$@" -c $< -o $@
 
 # Compile the ARM7 driver *without* the ARM9 flags used everywhere else.
 # The port patches redirect its sound registers and avoid the ARM9 scheduler.
 $(OUT)/arm7_raw/%.o: $(SDK)/libraries/%.c $(GEN)/nitro/fx/fx_const.h
 	@mkdir -p $(dir $@)
 	@echo "  ARM7 CC $(notdir $<)"
-	@$(CC) $(CFLAGS) -USDK_ARM9 -DSDK_ARM7 -include nitro/misc.h -include stdint.h -c $< -o $@
+	@MSYS2_ARG_CONV_EXCL="$(MSYS2_ARG_CONV_EXCL);-MQ" $(CC) $(CFLAGS) -USDK_ARM9 -DSDK_ARM7 -include nitro/misc.h -include stdint.h -MMD -MP -MQ"$@" -c $< -o $@
 
 # Produce one shared mapping from every ARM7 definition, not a naïve
 # --prefix-symbols (which would rename libc/OS references too).
@@ -462,3 +458,17 @@ test: $(TEST_BIN) $(FS_TEST_BIN) $(FS_FIXTURE_STAMP) $(THREAD_TEST_BIN) $(ARM7_T
 
 clean:
 	rm -rf build
+
+# Only compiler-produced objects have .d files; renamed ARM7 objects depend on
+# their raw object and symbol map. Normalize native GCC targets to Make paths.
+DEP_OBJECTS := $(SDK_OBJS) $(PORT_OBJS) $(ARM7_RAW)
+DEP_FILES := $(DEP_OBJECTS:.o=.d)
+DEP_STAMP := $(OUT)/.header-deps-v1
+$(DEP_STAMP): $(firstword $(MAKEFILE_LIST)) $(ROOT)/engine/compat/common.mk
+	@mkdir -p $(dir $@)
+	@touch $@
+$(DEP_OBJECTS): $(DEP_STAMP)
+.PHONY: missing-dependency-file
+missing-dependency-file:
+$(patsubst %.d,%.o,$(filter-out $(wildcard $(DEP_FILES)),$(DEP_FILES))): missing-dependency-file
+-include $(wildcard $(DEP_FILES))
