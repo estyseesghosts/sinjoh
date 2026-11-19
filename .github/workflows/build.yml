@@ -19,11 +19,14 @@ jobs:
       - name: Bootstrap the game and SDK sources
         run: python3 tools/game/bootstrap.py
 
+      - name: Build lock and provenance tests
+        run: python3 tests/native/test_build_guard.py
+
       - name: Build the release profile
-        run: make -f engine/game.mk TARGET=3ds program PROFILE=0 -j"$(nproc)"
+        run: sh tools/build.sh 0 -j"$(nproc)"
 
       - name: Build the measurement profile
-        run: make -f engine/game.mk TARGET=3ds program PROFILE=1 -j"$(nproc)"
+        run: sh tools/build.sh 1 -j"$(nproc)"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -31,4 +34,6 @@ jobs:
           path: |
             build/game/3ds/sinjoh-platinum.3dsx
             build/game/3ds-prof/sinjoh-platinum-dbg.3dsx
+            build/game/3ds/sinjoh-platinum.build-info.json
+            build/game/3ds-prof/sinjoh-platinum-dbg.build-info.json
           if-no-files-found: error

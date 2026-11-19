@@ -22,6 +22,15 @@ include $(ROOT)/engine/compat/common.mk
 
 GAME := $(ROOT)/build/upstream
 OUT  := $(ROOT)/build/game/$(TARGET)$(BUILD_SUFFIX)
+
+# One build per output tree (#14): tools/build.sh runs make under an OS lock
+# on $(OUT)/.build.lock. Refuse a 3DS build of this tree without that lock,
+# since a concurrent build would mix objects from two header revisions.
+ifeq ($(TARGET),3ds)
+ifeq ($(filter $(abspath $(OUT)),$(SINJOH_LOCKED_TREES)),)
+$(error $(OUT) is not locked; build with tools/build.sh (or tools/build.ps1))
+endif
+endif
 LIB  := $(OUT)/libplatinum_game.a
 NNS_PORT := $(ROOT)/engine/compat/nitrosystem
 LIBNITRO := $(NITRO)/build/$(TARGET)$(BUILD_SUFFIX)/libnitro.a
@@ -379,6 +388,9 @@ PROGRAM := $(OUT)/$(PROGRAM_NAME).3dsx
 $(PROGRAM_ELF): $(ENGINE_DS_OBJS) $(ENGINE_CTR_OBJS) $(SHADER_OBJS) $(WIDEART_O) \
                 $(OVERLAY_TABLE_C:.c=.o) $(GAME_HEADER_DEFS) $(WIFI_STUBS_O) $(LIBNITRO) $(LIBNNS)
 	@mkdir -p $(dir $@)
+	@python3 $(ROOT)/tools/build_guard.py verify --tree $(OUT) \
+	    --tree $(NITRO)/build/$(TARGET)$(BUILD_SUFFIX)=$(NITRO) \
+	    --tree $(NNS_PORT)/build/$(TARGET)$(BUILD_SUFFIX)=$(NNS_PORT)
 	$(file >$(OUT)/link.rsp,$(ENGINE_DS_OBJS) $(ENGINE_CTR_OBJS) $(SHADER_OBJS) $(WIDEART_O) $(GAME_OBJS) $(WIFI_STUBS_O))
 	@$(call native_rsp,$(OUT)/link.rsp)
 	@echo "  LINK $@"
@@ -398,6 +410,8 @@ program: $(PROGRAM)
 
 $(PROGRAM): $(PROGRAM_ELF)
 	@$(DEVKITPRO)/tools/bin/3dsxtool $< $@
+	@python3 $(ROOT)/tools/build_guard.py provenance --tree $(OUT) --artifact $@ --elf $< \
+	    --profile $(PROFILE) --cc $(CC) --flags $(FLAGS_SIG)
 
 clean:
 	rm -rf $(OUT)
@@ -414,7 +428,14 @@ DEP_STAMP := $(OUT)/.header-deps-v1
 $(DEP_STAMP): $(firstword $(MAKEFILE_LIST)) $(ROOT)/engine/compat/common.mk
 	@mkdir -p $(dir $@)
 	@touch $@
-$(DEP_OBJECTS): $(DEP_STAMP)
+# The compile flags this tree was built with, rewritten only when they
+# change: switching WIDEART_DEBUG in the same tree rebuilds the objects.
+FLAGS_SIG := $(OUT)/.compile-flags
+$(FLAGS_SIG): FORCE
+	@mkdir -p $(dir $@)
+	$(file >$@.new,$(CC)|$(GAME_CFLAGS)|$(PORT_CFLAGS)|$(SDK_INCLUDES)|$(ENGINE_DS_CFLAGS)|$(ENGINE_CTR_CFLAGS))
+	@if cmp -s $@.new $@; then rm -f $@.new; else mv $@.new $@; fi
+$(DEP_OBJECTS): $(DEP_STAMP) $(FLAGS_SIG)
 .PHONY: missing-dependency-file
 missing-dependency-file:
 $(patsubst %.d,%.o,$(filter-out $(wildcard $(DEP_FILES)),$(DEP_FILES))): missing-dependency-file

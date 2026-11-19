@@ -30,10 +30,9 @@ $wideart = if ($WideArtDebug) { " WIDEART_DEBUG=1" } else { "" }
 $profiles = if ($All) { @(0, 1) } else { @($Profile) }
 foreach ($p in $profiles) {
   $suffix = if ($p -eq 1) { "-prof" } else { "" }
-  $cleanCmd = if ($Clean) {
-    "rm -rf build/game/3ds$suffix engine/compat/nitro/build/3ds$suffix engine/compat/nitrosystem/build/3ds$suffix && "
-  } else { "" }
-  $cmd = 'export PATH="/c/Program Files/Git/cmd:$PATH"; cd ' + "'" + $unix + "'" + " && ${cleanCmd}make -f engine/game.mk TARGET=3ds program PROFILE=$p$wideart -j$Jobs"
+  # tools/build.sh takes the per-tree build lock (#14) around make.
+  $cleanEnv = if ($Clean) { "SINJOH_CLEAN=1 " } else { "" }
+  $cmd = 'export PATH="/c/Program Files/Git/cmd:$PATH"; cd ' + "'" + $unix + "'" + " && ${cleanEnv}sh tools/build.sh $p$wideart -j$Jobs"
   & $bash -lc $cmd
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }

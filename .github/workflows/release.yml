@@ -48,10 +48,10 @@ jobs:
         run: python3 tools/game/bootstrap.py
 
       - name: Build the release profile
-        run: make -f engine/game.mk TARGET=3ds program PROFILE=0 -j"$(nproc)"
+        run: sh tools/build.sh 0 -j"$(nproc)"
 
       - name: Build the measurement profile
-        run: make -f engine/game.mk TARGET=3ds program PROFILE=1 -j"$(nproc)"
+        run: sh tools/build.sh 1 -j"$(nproc)"
 
       - name: Build the HOME Menu forwarder (CIA)
         run: |
