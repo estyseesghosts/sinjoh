@@ -7,6 +7,9 @@
 Copies build/sd-card/3ds (programs, data pack, manifest, save) into
 LOTUS's persistent card for `--card`, and optionally stages a script.txt so
 the run is deterministic. Run the windowed session with tools/lotus/run_sinjoh.py.
+Input events own pad and touch through their last exclusive end, including
+idle gaps. Afterwards live input resumes; settings-only scripts leave it live.
+Without --script, an existing script is removed unless --keep-script is set.
 
 The packaged SD tree is the card's own layout: <sdmc>/3ds/sinjoh-platinum*.3dsx
 and <sdmc>/3ds/sinjoh/{data,saves}. The script goes under 3ds/sinjoh/.

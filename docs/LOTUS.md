@@ -134,12 +134,21 @@ A primary card's guest SD is
 `.../sdmc/3ds/`. A secondary session can copy that card for a disposable run,
 or start empty.
 
-Scripted input owns the pad for the whole run. While `script.txt` exists,
-`kj_script_input` answers every frame, including all-zero frames, so
-`lotus_input` is ignored; a live press during a scripted run proves nothing.
-To drive a session by hand, stage with no `--script` (that deletes
-`script.txt`) and keep the save: `stage_card.py` copies the tree over the
-card and leaves `saves/` in place.
+If a script contains input events, it owns the pad and touch from V-blank 0
+through the last event, including idle gaps before or between events; live
+input is ignored during that interval. Events use the half-open interval
+`from` through `to - 1`, with a single V-blank number held for `every:`
+V-blanks (default 10). Overlapping key presses combine; the last overlapping
+touch event in file order supplies the touch position. After the final event's
+exclusive end, control returns to `lotus_input` and console input. A script
+with only settings, marks or no valid input events leaves live input enabled.
+`every:` must be a positive 32-bit decimal, and event intervals must have a
+valid 32-bit end greater than the start; malformed values are ignored and
+logged. Other directives (`debug:`, `freeze`, `dump`, `end:`) remain active.
+
+To remove a staged script, stage with no `--script` (that deletes
+`script.txt`); `--keep-script` preserves it. `stage_card.py` copies the tree
+over the card and leaves `saves/` in place.
 
 `lotus_input`'s `buttons` is a bitmask in LOTUS's `NativeButton` order, not
 the DS or libctru order: A 1, B 2, X 4, Y 8, Up 16, Down 32, Left 64,
