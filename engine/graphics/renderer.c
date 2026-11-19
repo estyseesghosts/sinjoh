@@ -289,7 +289,8 @@ void kj_ctr_publish_frame(const kj_frame_input *in)
                "3D batches %lu draws %lu tris %lu tex uploads %lu tex bytes compared %lu "
                "tex full %lu unsupported %lu; box tests %lu culled %lu (far only %lu); "
                "program switches %lu palette uploads %lu (%lu matrices) lighting uploads %lu "
-               "shininess uploads %lu; state skips %lu; window passes %lu",
+               "shininess uploads %lu; state skips %lu; window passes %lu; "
+               "join groups %lu joined %lu (batches %lu) declined %lu",
                (unsigned long)a.lookups, (unsigned long)a.conversions, (unsigned long)a.evictions,
                (unsigned long)a.full, (unsigned long)d.batches, (unsigned long)d.draws,
                (unsigned long)d.triangles, (unsigned long)d.tex_uploads,
@@ -299,7 +300,9 @@ void kj_ctr_publish_frame(const kj_frame_input *in)
                (unsigned long)d.program_switches, (unsigned long)d.palette_uploads,
                (unsigned long)d.palette_matrices, (unsigned long)d.lighting_uploads,
                (unsigned long)d.shininess_uploads, (unsigned long)d.state_skips,
-               (unsigned long)d.window_passes);
+               (unsigned long)d.window_passes, (unsigned long)d.join_groups,
+               (unsigned long)d.joined_groups, (unsigned long)d.joined_batches,
+               (unsigned long)d.join_declined);
         {
             GSPGPU_PerfLog now;
             unsigned long p3d = 0, ppf = 0, psc = 0;

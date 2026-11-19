@@ -32,6 +32,9 @@ typedef struct kj_g3d_stats {
     uint32_t lighting_uploads, shininess_uploads;
     /* C3D_* cull/depth/blend calls skipped because the state was unchanged. */
     uint32_t state_skips;
+    /* Opaque same-state groups tried for one union-palette draw, joined,
+     * the batches they covered, and groups declined on overflow. */
+    uint32_t join_groups, joined_groups, joined_batches, join_declined;
 } kj_g3d_stats;
 
 void kj_g3d_take_stats(kj_g3d_stats *out);
