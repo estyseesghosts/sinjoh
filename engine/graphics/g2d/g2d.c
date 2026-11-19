@@ -217,6 +217,7 @@ typedef struct run {
     uint32_t count;
     uint32_t cap;
     bool ext;
+    bool incomplete; /* atlas or quad capacity failure: retry the retained build */
     uint16_t *slots;
     uint32_t char_lo, char_hi;
 } run;
@@ -224,6 +225,7 @@ typedef struct run {
 static bool run_begin(run *r, uint32_t cap)
 {
     r->count = 0;
+    r->incomplete = false;
     r->char_lo = UINT32_MAX;
     r->char_hi = 0;
     if (r->ext) {
@@ -242,11 +244,8 @@ static void run_end(run *r)
     }
 }
 
-static inline void run_note(run *r, uint16_t slot, uint32_t off, uint32_t bytes)
+static inline void run_note(run *r, uint32_t off, uint32_t bytes)
 {
-    if (r->slots != NULL) {
-        r->slots[r->count] = slot;
-    }
     if (off < r->char_lo) {
         r->char_lo = off;
     }
@@ -303,16 +302,25 @@ static uint32_t text_bg(const ctx *c, int bg, run *out)
                 pal = pal_256(c->in, c->engine, 0, &pal_id);
             }
             const kj_tile_ref t = kj_atlas_tile(source, c->bg_vram + toff, toff, bpp8, pal, pal_id);
-            if (!t.valid || t.transparent) {
+            /* Blank tiles still affect reuse if the game later writes pixels. */
+            run_note(out, toff, tile_bytes);
+            if (!t.valid) {
+                out->incomplete = true;
+                continue;
+            }
+            if (t.transparent) {
                 continue;
             }
             if (out->count >= out->cap) {
+                out->incomplete = true;
 #ifndef HGSS_PROFILE_OFF
                 ++s_stats.dropped_quads;
 #endif
                 continue;
             }
-            run_note(out, t.slot, toff, tile_bytes);
+            if (out->slots != NULL) {
+                out->slots[out->count] = t.slot;
+            }
             put_quad(out->v + out->count * 4u, sx, sy, 8, 8, t.slot, (entry >> 10) & 1,
                      (entry >> 11) & 1);
             ++out->count;
@@ -528,6 +536,7 @@ static uint32_t objs(const ctx *c, int prio, bool semi, run *out)
             vf = (a1 >> 13) & 1;
         }
         if (out->count + (uint32_t)(tw * th) > out->cap) {
+            out->incomplete = true;
 #ifndef HGSS_PROFILE_OFF
             ++s_stats.dropped_quads;
 #endif
@@ -545,10 +554,17 @@ static uint32_t objs(const ctx *c, int prio, bool semi, run *out)
                 off &= mask;
                 const kj_tile_ref t =
                     kj_atlas_tile(source, c->obj_vram + off, off, bpp8, pal, pal_id);
-                if (!t.valid || t.transparent) {
+                run_note(out, off, tile_bytes);
+                if (!t.valid) {
+                    out->incomplete = true;
                     continue;
                 }
-                run_note(out, t.slot, off, tile_bytes);
+                if (t.transparent) {
+                    continue;
+                }
+                if (out->slots != NULL) {
+                    out->slots[out->count] = t.slot;
+                }
                 kj_v2d *v = out->v + out->count * 4u;
                 if (!affine) {
                     const int qx = x + (hf ? (tw - 1 - tx) : tx) * 8;
@@ -753,27 +769,28 @@ static void draw_layer(const ctx *c, const fx *f, int layer, const drawable *d, 
 #endif
             continue;
         }
-        /* Opaque where no 2nd target is below (bit 0 clear), then blended
-         * over the 2nd targets (bit 0 set). The order matters: the blended
-         * pass clears bit 0 for a layer that is not a 2nd target, so the
-         * opaque pass has to run first or it redraws over the blend. */
-        blend_off();
-        C3D_StencilTest(true, GPU_EQUAL, region, rmask | 1u, 0x01);
-        C3D_StencilOp(GPU_STENCIL_KEEP, GPU_STENCIL_KEEP, t2 ? GPU_STENCIL_INVERT : GPU_STENCIL_KEEP);
-        if (edge != NULL) {
-            draw_quads(edge);
+        /* The pass that changes bit 0 runs last, so its pixels cannot be
+         * redrawn by the other pass. The opaque pass changes it when the
+         * current layer is a 2nd target; otherwise the blended pass does. */
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool blended = (pass == 0) == t2;
+            if (blended) {
+                blend_alpha(f->eva, f->evb);
+                C3D_StencilTest(true, GPU_EQUAL, region | 1u, rmask | 1u, 0x03);
+                C3D_StencilOp(GPU_STENCIL_KEEP, GPU_STENCIL_KEEP,
+                              t2 ? GPU_STENCIL_KEEP : GPU_STENCIL_INVERT);
+            } else {
+                blend_off();
+                C3D_StencilTest(true, GPU_EQUAL, region, rmask | 1u, 0x01);
+                C3D_StencilOp(GPU_STENCIL_KEEP, GPU_STENCIL_KEEP,
+                              t2 ? GPU_STENCIL_INVERT : GPU_STENCIL_KEEP);
+            }
+            if (edge != NULL) {
+                draw_quads(edge);
+            }
+            draw_quads(d);
+            draw_band(c, band);
         }
-        draw_quads(d);
-        draw_band(c, band);
-        /* blended over 2nd targets */
-        blend_alpha(f->eva, f->evb);
-        C3D_StencilTest(true, GPU_EQUAL, region | 1u, rmask | 1u, 0x03);
-        C3D_StencilOp(GPU_STENCIL_KEEP, GPU_STENCIL_KEEP, t2 ? GPU_STENCIL_KEEP : GPU_STENCIL_INVERT);
-        if (edge != NULL) {
-            draw_quads(edge);
-        }
-        draw_quads(d);
-        draw_band(c, band);
 #ifndef HGSS_PROFILE_OFF
         s_stats.draws += 2;
 #endif
@@ -1484,7 +1501,7 @@ static bool text_bg_retained(const ctx *c, int bg, drawable *out, uint64_t *art_
     r.cap = CACHE_QUADS;
     r.slots = lc->slots;
     text_bg(c, bg, &r);
-    lc->valid = true;
+    lc->valid = !r.incomplete;
     memcpy(lc->key, key, 16);
     memcpy(lc->pal, pal, 512);
     lc->map_off = moff;
@@ -1579,6 +1596,7 @@ static bool objs_retained(const ctx *c, drawable sub[8])
         return false;
     }
     uint32_t used = 0, lo = UINT32_MAX, hi = 0;
+    bool incomplete = false;
     for (int i = 0; i < 8; ++i) {
         run r;
         memset(&r, 0, sizeof(r));
@@ -1590,12 +1608,13 @@ static bool objs_retained(const ctx *c, drawable sub[8])
         lc->sub_first[i] = used;
         lc->sub_count[i] = r.count;
         used += r.count;
-        if (r.count) {
+        if (r.char_lo != UINT32_MAX) {
             lo = r.char_lo < lo ? r.char_lo : lo;
             hi = r.char_hi > hi ? r.char_hi : hi;
         }
+        incomplete |= r.incomplete;
     }
-    lc->valid = true;
+    lc->valid = !incomplete;
     memcpy(lc->key, key, 16);
     memcpy(lc->oam, oam, 0x400);
     memcpy(lc->pal, pal, 512);
