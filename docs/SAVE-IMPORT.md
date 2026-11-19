@@ -22,7 +22,8 @@ never overwritten. Successful conversion is one-time: the active file is then
 a raw image, and the original remains alongside it.
 
 If storage is full, read-only, or an operation fails, conversion stops and the
-log reports failure. The original remains either at `platinum.sav` or in the
+log reports the failed stage and errno (zero if no system error was reported).
+The original remains either at `platinum.sav` or in the
 verified `.orig` backup. A temporary or incomplete backup can also remain; do
 not assume every backup is complete. If an interruption leaves the active file
 missing but a backup or temporary file exists, Sinjoh refuses to create a blank

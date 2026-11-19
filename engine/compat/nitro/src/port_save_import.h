@@ -10,6 +10,10 @@
  * On failure path may be missing after a failed rename; the .orig copy remains.
  * `kind` is a static diagnostic string or NULL. */
 bool port_save_import(const char *path, unsigned char *image, const char **kind);
+/* Static diagnostic stage from the most recent import; NULL on success. */
+const char *port_save_import_failure(void);
+/* Captured errno for the failure, or 0 if no system error was reported. */
+int port_save_import_errno(void);
 /* Backup or temporary files prevent a fresh save after interrupted replacement.
  * Inability to inspect the directory also fails closed. */
 bool port_save_has_backup(const char *path);
