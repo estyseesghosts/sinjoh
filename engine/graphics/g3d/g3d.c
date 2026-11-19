@@ -558,6 +558,33 @@ static bool draw_joined(const kj_g3_frame *f, const kj_g3_batch **members, unsig
     return true;
 }
 
+/* The longest prefix of `m` (at least 1) whose batches fit one joined draw:
+ * a union palette within the program's matrix limit and scratch room for
+ * every index (an index bounds the vertices it can add). */
+static unsigned join_chunk(const kj_g3_frame *f, const kj_g3_batch **m, unsigned n)
+{
+    const unsigned cap = (m[0]->flags & KJ_G3_BATCH_LIT) ? KJ_G3_LIT_PALETTE : KJ_G3_PALETTE;
+    kj_g3_matrix u[KJ_G3_PALETTE];
+    unsigned ucount = 0;
+    uint32_t indices = 0;
+    unsigned k = 0;
+    for (; k < n; ++k) {
+        const kj_g3_batch *b = m[k];
+        const unsigned saved = ucount;
+        bool fits = indices + b->index_count <= KJ_JOIN_MAX_INDICES &&
+                    indices + b->index_count <= KJ_JOIN_MAX_VERTS;
+        for (unsigned j = 0; fits && j < b->matrix_count; ++j) {
+            fits = union_find_or_add(u, &ucount, cap, &f->matrices[b->first_matrix + j]) >= 0;
+        }
+        if (!fits) {
+            ucount = saved;
+            break;
+        }
+        indices += b->index_count;
+    }
+    return k > 0 ? k : 1;
+}
+
 static void draw_pass(const kj_target *target, bool translucent_pass, uint32_t disp3dcnt,
                       uint8_t stencil_flags)
 {
@@ -606,28 +633,37 @@ static void draw_pass(const kj_target *target, bool translucent_pass, uint32_t d
             members[n] = &f->batches[i + n];
             ++n;
         }
-        bool drawn = false;
-        if (n > 1 && !(dbg & (KJ_DEBUG_NO_JOIN |
-                              ((b->flags & KJ_G3_BATCH_LIT) ? KJ_DEBUG_NO_JOIN_LIT : 0)))) {
+        const bool may_join = !(dbg & (KJ_DEBUG_NO_JOIN |
+                                       ((b->flags & KJ_G3_BATCH_LIT) ? KJ_DEBUG_NO_JOIN_LIT : 0)));
+        /* A long same-state run (Platinum's field: many map pieces sharing a
+         * material, each with its own matrices) overflows one union palette.
+         * Split it, in order, into the longest prefixes that fit instead of
+         * declining the whole run. */
+        for (unsigned start = 0; start < n;) {
+            const unsigned k = may_join ? join_chunk(f, members + start, n - start) : 1;
+            bool drawn = false;
+            if (k > 1) {
 #ifndef HGSS_PROFILE_OFF
-            ++s_stats.join_groups;
+                ++s_stats.join_groups;
 #endif
-            drawn = draw_joined(f, members, n, false, disp3dcnt, dbg, wbuffer, target,
-                                &last_vp, fix);
+                drawn = draw_joined(f, members + start, k, false, disp3dcnt, dbg, wbuffer,
+                                    target, &last_vp, fix);
 #ifndef HGSS_PROFILE_OFF
-            if (drawn) {
-                ++s_stats.joined_groups;
-                s_stats.joined_batches += n;
-            } else {
-                ++s_stats.join_declined;
-            }
+                if (drawn) {
+                    ++s_stats.joined_groups;
+                    s_stats.joined_batches += k;
+                } else {
+                    ++s_stats.join_declined;
+                }
 #endif
-        }
-        if (!drawn) {
-            for (unsigned m = 0; m < n; ++m) {
-                draw_batch_direct(f, members[m], false, disp3dcnt, dbg, wbuffer, target,
-                                  &last_vp, fix);
             }
+            if (!drawn) {
+                for (unsigned m = start; m < start + k; ++m) {
+                    draw_batch_direct(f, members[m], false, disp3dcnt, dbg, wbuffer, target,
+                                      &last_vp, fix);
+                }
+            }
+            start += k;
         }
         i += n;
     }
