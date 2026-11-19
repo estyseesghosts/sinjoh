@@ -8,7 +8,10 @@
 #include <nitro_port.h>
 #include "card_common.h"
 #include "port_platform.h"
+#include "port_save_import.h"
 
+#include <errno.h>
+#include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -111,14 +114,43 @@ static BOOL open_save(void)
     if (!sSavePath) return FALSE;
     sSave = fopen(sSavePath, "r+b");
     if (!sSave) {
-        sSave = fopen(sSavePath, "w+b");
-        if (!sSave) return FALSE;
+        /* Never truncate an existing but inaccessible file, or create an empty
+         * save after an interrupted import left only the preserved original. */
+        if (errno != ENOENT || port_save_has_backup(sSavePath)) {
+            NitroPort_Log("[save] cannot open %s; check for a retained .orig backup", sSavePath);
+            return FALSE;
+        }
+        int fd = open(sSavePath, O_RDWR | O_CREAT | O_EXCL, 0600);
+        if (fd < 0) return FALSE;
+        sSave = fdopen(fd, "w+b");
+        if (!sSave) {
+            close(fd);
+            unlink(sSavePath);
+            return FALSE;
+        }
         (void)setvbuf(sSave, NULL, _IONBF, 0);
         memset(sImage, 0xff, sizeof(sImage));
         if (fwrite(sImage, 1, SAVE_BYTES, sSave) != SAVE_BYTES || fflush(sSave) != 0)
             goto invalid;
     } else {
         (void)setvbuf(sSave, NULL, _IONBF, 0);
+        if (fseek(sSave, 0, SEEK_END) != 0 || (size = ftell(sSave)) < 0) {
+            goto invalid;
+        }
+        if (size != (long)SAVE_BYTES) {
+            const char *kind = NULL;
+            close_save();
+            if (!port_save_import(sSavePath, sImage, &kind)) {
+                NitroPort_Log("[save] %s: %ld bytes, %s; import failed; original retained",
+                              sSavePath, size, kind ? kind : "unrecognized or invalid format");
+                return FALSE;
+            }
+            NitroPort_Log("[save] imported %s (%ld bytes); original retained as .orig",
+                          kind, size);
+            sSave = fopen(sSavePath, "r+b");
+            if (!sSave) return FALSE;
+            (void)setvbuf(sSave, NULL, _IONBF, 0);
+        }
     }
     if (fseek(sSave, 0, SEEK_END) != 0 ||
         (size = ftell(sSave)) != (long)SAVE_BYTES) goto invalid;
