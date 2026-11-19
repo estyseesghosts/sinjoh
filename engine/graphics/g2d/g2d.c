@@ -475,17 +475,19 @@ static uint32_t objs(const ctx *c, int prio, bool semi, run *out)
         if (!affine && (a0 & 0x200)) {
             continue;
         }
-        if (((a2 >> 10) & 3) != prio) {
-            continue;
-        }
         const int mode = (a0 >> 10) & 3;
-        if (mode == 2 || mode == 3) {
+        if (prio < 0) {
+            if (mode != 2) {
+                continue;
+            }
+        } else if (((a2 >> 10) & 3) != prio || mode == 2) {
+            continue;
+        } else if (mode == 3) {
 #ifndef HGSS_PROFILE_OFF
-            ++s_stats.unsupported_modes; /* OBJ window / bitmap OBJ */
+            ++s_stats.unsupported_modes; /* bitmap OBJ */
 #endif
             continue;
-        }
-        if ((mode == 1) != semi) {
+        } else if ((mode == 1) != semi) {
             continue;
         }
         const int shape = a0 >> 14, sz = a1 >> 14;
@@ -633,7 +635,9 @@ typedef struct fx {
     int mode;
     float eva, evb, evy;
     bool windows;
-    uint8_t region_enable[3]; /* bits 0-5: BG0-3, OBJ, effects */
+    bool objwin;
+    uint8_t region_enable[4]; /* bits 0-5: BG0-3, OBJ, effects */
+    uint8_t active;           /* bit r: region r can occur (outside always) */
 } fx;
 
 static void read_fx(const ctx *c, fx *f)
@@ -646,16 +650,29 @@ static void read_fx(const ctx *c, fx *f)
     f->eva = (eva > 16 ? 16 : eva) / 16.0f;
     f->evb = (evb > 16 ? 16 : evb) / 16.0f;
     f->evy = (evy > 16 ? 16 : evy) / 16.0f;
-    f->windows = (c->dispcnt & (3u << 13)) != 0;
-    if (c->dispcnt & (1u << 15)) {
-#ifndef HGSS_PROFILE_OFF
-        ++s_stats.unsupported_modes; /* OBJ window: drawn as outside */
-#endif
-    }
+    /* WIN0, WIN1, OBJ window (DISPCNT 13-15); the OBJ window also needs
+     * the OBJ layer on (DISPCNT 12). */
+    f->windows = (c->dispcnt & (7u << 13)) != 0;
+    f->objwin = (c->dispcnt & (1u << 15)) && (c->dispcnt & (1u << 12));
     const uint16_t winin = r16(c->regs, 0x48), winout = r16(c->regs, 0x4A);
     f->region_enable[0] = f->windows ? (uint8_t)(winout & 0x3F) : 0x3F;
     f->region_enable[1] = (uint8_t)(winin & 0x3F);
     f->region_enable[2] = (uint8_t)((winin >> 8) & 0x3F);
+    f->region_enable[3] = (uint8_t)((winout >> 8) & 0x3F);
+    f->active = (uint8_t)(1u | ((c->dispcnt >> 12) & 6u) | (f->objwin ? 8u : 0u));
+}
+
+/* The window regions BG0 (the 3D layer) shows in, as a bit per region for
+ * kj_g3d_draw; regions that cannot occur are left to `active`. */
+static uint8_t bg0_window_on(const fx *f)
+{
+    uint8_t on = 0;
+    for (int r = 0; r < 4; ++r) {
+        if (f->region_enable[r] & 1u) {
+            on |= (uint8_t)(1u << r);
+        }
+    }
+    return on;
 }
 
 static void stencil_write_all(uint8_t ref, uint8_t test_mask)
@@ -737,8 +754,11 @@ static void draw_layer(const ctx *c, const fx *f, int layer, const drawable *d, 
     }
     const bool t2 = (f->bldcnt >> (8 + layer)) & 1;
     const bool t1 = force_semi || ((f->bldcnt >> layer) & 1);
-    for (int r = 0; r < 3; ++r) {
+    for (int r = 0; r < 4; ++r) {
         if (r > 0 && !f->windows) {
+            break;
+        }
+        if (r == 3 && !f->objwin) {
             break;
         }
         const uint8_t en = f->region_enable[r];
@@ -830,11 +850,39 @@ static void write_windows(const ctx *c)
         if (y2 > 192 || (y2 == 0 && y1 != 0)) {
             y2 = 192;
         }
-        int xs[2][2], ys[2][2], nx = 0, ny = 0;
+        int xs[4][2], ys[2][2], nx = 0, ny = 0;
         if (x1 <= x2) { xs[nx][0] = x1; xs[nx++][1] = x2; }
         else { xs[nx][0] = x1; xs[nx++][1] = 256; xs[nx][0] = 0; xs[nx++][1] = x2; }
         if (y1 <= y2) { ys[ny][0] = y1; ys[ny++][1] = y2; }
         else { ys[ny][0] = y1; ys[ny++][1] = 192; ys[ny][0] = 0; ys[ny++][1] = y2; }
+        /* Wide top screen: a window that reaches a DS screen edge runs on
+         * across the side columns, so wipes and covers closing in from the
+         * edges hide the widened picture too. The side columns get their
+         * own rectangles; the DS columns keep exactly the registers'
+         * window, except that a right edge of 255 counts as reaching the
+         * edge: Platinum's full-width windows (encounter_effect.c) end at
+         * 255, leaving DS column 255 outside - the DS screen's last column,
+         * but mid-picture once widened - so that column joins the side. */
+        if (c->screen == KJ_SCREEN_TOP) {
+            const int n = nx;
+            for (int i = 0; i < n; ++i) {
+                if (xs[i][0] >= xs[i][1]) {
+                    continue;
+                }
+                if (xs[i][0] == 0) {
+                    xs[nx][0] = -64;
+                    xs[nx++][1] = 0;
+                }
+                if (xs[i][1] >= 255) {
+                    xs[i][1] = 256;
+                    xs[nx][0] = 256;
+                    xs[nx++][1] = 320;
+                }
+            }
+#ifndef HGSS_PROFILE_OFF
+            s_stats.wide_windows += (uint32_t)(nx - n);
+#endif
+        }
         C3D_StencilTest(true, GPU_ALWAYS, (u8)((w + 1) << 4), 0, 0x30);
         C3D_StencilOp(GPU_STENCIL_KEEP, GPU_STENCIL_KEEP, GPU_STENCIL_REPLACE);
         for (int i = 0; i < nx; ++i) {
@@ -1374,7 +1422,7 @@ typedef struct layer_cache {
     int art_screen;    /* the edge and wide art depend on which screen this is */
     bool art_valid;
     /* OBJ: per (priority, semi) sub-ranges of quads */
-    uint32_t sub_first[8], sub_count[8];
+    uint32_t sub_first[9], sub_count[9];
     uint8_t oam[0x400];
 } layer_cache;
 
@@ -1568,7 +1616,7 @@ static void art_quads(const ctx *c, int bg, layer_cache *lc, uint64_t art_key,
 }
 
 /* The OBJ layer (all priorities), retained when possible. */
-static bool objs_retained(const ctx *c, drawable sub[8])
+static bool objs_retained(const ctx *c, drawable sub[9])
 {
     layer_cache *lc = &s_obj_cache[c->engine];
     const uint8_t *oam = c->in->mem->oam + c->engine * 0x400;
@@ -1583,7 +1631,7 @@ static bool objs_retained(const ctx *c, drawable sub[8])
     if (lc->valid && memcmp(lc->key, key, 16) == 0 && memcmp(lc->oam, oam, 0x400) == 0 &&
         memcmp(lc->pal, pal, 512) == 0 && lc->ext_src == ext &&
         (ext == NULL || memcmp(lc->ext, ext, 0x2000) == 0) && chars_same(lc, c->obj_vram)) {
-        for (int i = 0; i < 8; ++i) {
+        for (int i = 0; i < 9; ++i) {
             sub[i].base = lc->quads + lc->sub_first[i] * 4u;
             sub[i].count = lc->sub_count[i];
         }
@@ -1597,14 +1645,14 @@ static bool objs_retained(const ctx *c, drawable sub[8])
     }
     uint32_t used = 0, lo = UINT32_MAX, hi = 0;
     bool incomplete = false;
-    for (int i = 0; i < 8; ++i) {
+    for (int i = 0; i < 9; ++i) {
         run r;
         memset(&r, 0, sizeof(r));
         r.ext = true;
         r.v = lc->quads + used * 4u;
         r.cap = CACHE_QUADS - used;
         r.slots = lc->slots + used;
-        objs(c, i >> 1, (i & 1) != 0, &r);
+        objs(c, i < 8 ? i >> 1 : -1, (i & 1) != 0, &r);
         lc->sub_first[i] = used;
         lc->sub_count[i] = r.count;
         used += r.count;
@@ -1624,7 +1672,7 @@ static bool objs_retained(const ctx *c, drawable sub[8])
     }
     chars_keep(lc, c->obj_vram, lo == UINT32_MAX ? 0 : lo, hi);
     lc->count = used;
-    for (int i = 0; i < 8; ++i) {
+    for (int i = 0; i < 9; ++i) {
         sub[i].base = lc->quads + lc->sub_first[i] * 4u;
         sub[i].count = lc->sub_count[i];
     }
@@ -1656,7 +1704,7 @@ typedef struct prepared {
     uint64_t bg_key[4];      /* the layer's art key (the wide art's pictures) */
     drawable bg_band[4];     /* the layer's picture's bands, if it has one */
     drawable bg_edge[4];     /* the layer's edge colour carried into the bands */
-    drawable obj[8]; /* priority * 2 + semi */
+    drawable obj[9]; /* priority * 2 + semi; [8]: OBJ-window OBJs */
     bool obj_ok;
     bool all_reused;
 } prepared;
@@ -1757,10 +1805,10 @@ static void prepare_span(const ctx *c, bool retain, prepared *pr)
             pr->obj_ok = objs_retained(c, pr->obj);
         } else {
             pr->obj_ok = true;
-            for (int i = 0; i < 8; ++i) {
+            for (int i = 0; i < 9; ++i) {
                 run r;
                 memset(&r, 0, sizeof(r));
-                objs(c, i >> 1, (i & 1) != 0, &r);
+                objs(c, i < 8 ? i >> 1 : -1, (i & 1) != 0, &r);
                 if (r.v != NULL) {
                     run_end(&r);
                 }
@@ -1770,7 +1818,7 @@ static void prepare_span(const ctx *c, bool retain, prepared *pr)
             }
             ++s_rebuilt_layers;
         }
-        for (int i = 0; i < 8; ++i) {
+        for (int i = 0; i < 9; ++i) {
 #ifndef HGSS_PROFILE_OFF
             s_stats.obj_quads += pr->obj[i].count;
 #endif
@@ -1806,6 +1854,16 @@ static void draw_span(ctx *c, const prepared *pr, bool draw_3d, bool *drew_3d)
 
     restore_2d_state(c, sx0);
     if (f.windows) {
+        if (f.objwin && pr->obj_ok && pr->obj[8].count) {
+            /* Opaque texels of the window OBJs (alpha test) stamp region 3
+             * into stencil bits 4-5; no colour writes. WIN1/WIN0 follow
+             * and override it, matching DS window priority. */
+            C3D_DepthTest(false, GPU_ALWAYS, 0);
+            blend_off();
+            C3D_StencilTest(true, GPU_ALWAYS, 0x30, 0, 0x30);
+            C3D_StencilOp(GPU_STENCIL_KEEP, GPU_STENCIL_KEEP, GPU_STENCIL_REPLACE);
+            draw_quads(&pr->obj[8]);
+        }
         write_windows(c);
         restore_2d_state(c, sx0);
     }
@@ -1820,7 +1878,8 @@ static void draw_span(ctx *c, const prepared *pr, bool draw_3d, bool *drew_3d)
                     const bool t1 = f.bldcnt & 1;
                     kj_gpu_scissor_off();
                     kj_g3d_draw(c->target, c->screen == KJ_SCREEN_TOP,
-                                (uint8_t)((t2 ? 1 : 0) | (t1 && f.mode >= 2 ? 2 : 0)));
+                                (uint8_t)((t2 ? 1 : 0) | (t1 && f.mode >= 2 ? 2 : 0)),
+                                bg0_window_on(&f), f.windows ? f.active : 0);
                     *drew_3d = true;
                     restore_2d_state(c, sx0);
                 }

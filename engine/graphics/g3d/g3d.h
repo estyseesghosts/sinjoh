@@ -14,13 +14,18 @@ void kj_g3d_set_frame(const kj_g3_frame *frame);
 /* Draw the 3D layer into the current target at BG0's place. `wide`: show the
  * extended horizontal field (top screen). `stencil_flags`: the 2D effect
  * flags (blend target bits) the 3D pixels carry. */
-void kj_g3d_draw(const kj_target *target, bool wide, uint8_t stencil_flags);
+/* Window regions are the 2D stencil bits 4-5 (0 outside, 1 WIN0, 2 WIN1,
+ * 3 OBJ window): `window_active` bit r is set when region r can occur (0:
+ * windows off, draw everywhere) and `window_on` bit r when BG0 shows in r. */
+void kj_g3d_draw(const kj_target *target, bool wide, uint8_t stencil_flags, uint8_t window_on,
+                 uint8_t window_active);
 
 typedef struct kj_g3d_stats {
     uint32_t batches, draws, triangles;
     uint32_t tex_uploads, tex_bytes_compared, tex_cache_full;
     uint32_t unsupported;
     uint32_t box_tests, box_culled, box_culled_far;
+    uint32_t window_passes; /* BG0 passes gated to one window region */
     /* Per-batch state cost: how often the two 3D programs swap, and how many
      * clip-matrix palettes and lighting sets are re-uploaded. */
     uint32_t program_switches, palette_uploads, palette_matrices;

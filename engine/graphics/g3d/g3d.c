@@ -408,7 +408,8 @@ static void draw_pass(const kj_target *target, bool translucent_pass, uint32_t d
     }
 }
 
-void kj_g3d_draw(const kj_target *target, bool wide, uint8_t stencil_flags)
+void kj_g3d_draw(const kj_target *target, bool wide, uint8_t stencil_flags, uint8_t window_on,
+                 uint8_t window_active)
 {
     const kj_g3_frame *f = s_frame;
     s_wide = wide;
@@ -462,11 +463,37 @@ void kj_g3d_draw(const kj_target *target, bool wide, uint8_t stencil_flags)
     const unsigned alpha_ref = (f->disp3dcnt & 4u) ? f->alpha_test_ref : 0u;
     C3D_AlphaTest(!(kj_script_debug() & KJ_DEBUG_NO_ALPHA_TEST), GPU_GREATER,
                   (int)(alpha_ref * 255u / 31u));
-    C3D_StencilTest(true, GPU_ALWAYS, stencil_flags, 0, 0x03);
+    /* Window regions live in stencil bits 4-5 (g2d.c); test them, write only
+     * the effect flags in bits 0-1. One stencil test covers "every region",
+     * "only r" and "all but r". A two-and-two split has no single test, so
+     * BG0 is drawn once per shown region; the regions are disjoint pixels
+     * and a stencil-rejected fragment writes no depth, so each pass sees the
+     * depth buffer a single pass would have. */
+    const uint8_t on = (uint8_t)(window_on & window_active);
+    const uint8_t off = (uint8_t)(window_active & ~window_on);
     C3D_StencilOp(GPU_STENCIL_KEEP, GPU_STENCIL_KEEP, GPU_STENCIL_REPLACE);
-
-    draw_pass(target, false, f->disp3dcnt, stencil_flags);
-    draw_pass(target, true, f->disp3dcnt, stencil_flags);
+    if (window_active == 0 || off == 0) {
+        C3D_StencilTest(true, GPU_ALWAYS, stencil_flags, 0, 0x03);
+        draw_pass(target, false, f->disp3dcnt, stencil_flags);
+        draw_pass(target, true, f->disp3dcnt, stencil_flags);
+    } else if ((off & (off - 1u)) == 0 && (on & (on - 1u)) != 0) {
+        const uint8_t region = (uint8_t)(__builtin_ctz(off) << 4);
+        C3D_StencilTest(true, GPU_NOTEQUAL, region | stencil_flags, 0x30, 0x03);
+        draw_pass(target, false, f->disp3dcnt, stencil_flags);
+        draw_pass(target, true, f->disp3dcnt, stencil_flags);
+    } else {
+        for (unsigned r = 0; r < 4; ++r) {
+            if (!(on & (1u << r))) {
+                continue;
+            }
+            C3D_StencilTest(true, GPU_EQUAL, (uint8_t)(r << 4) | stencil_flags, 0x30, 0x03);
+            draw_pass(target, false, f->disp3dcnt, stencil_flags);
+            draw_pass(target, true, f->disp3dcnt, stencil_flags);
+#ifndef HGSS_PROFILE_OFF
+            ++s_stats.window_passes;
+#endif
+        }
+    }
 
     C3D_DepthTest(false, GPU_ALWAYS, GPU_WRITE_COLOR);
     C3D_CullFace(GPU_CULL_NONE);

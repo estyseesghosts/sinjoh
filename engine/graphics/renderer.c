@@ -234,11 +234,12 @@ void kj_ctr_publish_frame(const kj_frame_input *in)
         kj_atlas_take_stats(&a);
         kj_log("[gpu] 600 frames: 2D screens skipped %lu, layers reused %lu rebuilt %lu, "
                "bg quads %lu obj quads %lu draws %lu spans %lu unsupported %lu dropped %lu, "
-               "char KiB compared %lu",
+               "char KiB compared %lu wide window sides %lu",
                (unsigned long)g.skipped_screens, (unsigned long)g.reused_layers,
                (unsigned long)g.rebuilt_layers, (unsigned long)g.bg_quads, (unsigned long)g.obj_quads,
                (unsigned long)g.draws, (unsigned long)g.spans, (unsigned long)g.unsupported_modes,
-               (unsigned long)g.dropped_quads, (unsigned long)(g.char_bytes_compared / 1024u));
+               (unsigned long)g.dropped_quads, (unsigned long)(g.char_bytes_compared / 1024u),
+               (unsigned long)g.wide_windows);
         kj_ds_profile dp;
         kj_ds_take_profile(&dp);
         /* Per game frame: one H-blank walk runs per game frame, so walks is
@@ -288,7 +289,7 @@ void kj_ctr_publish_frame(const kj_frame_input *in)
                "3D batches %lu draws %lu tris %lu tex uploads %lu tex bytes compared %lu "
                "tex full %lu unsupported %lu; box tests %lu culled %lu (far only %lu); "
                "program switches %lu palette uploads %lu (%lu matrices) lighting uploads %lu "
-               "shininess uploads %lu; state skips %lu",
+               "shininess uploads %lu; state skips %lu; window passes %lu",
                (unsigned long)a.lookups, (unsigned long)a.conversions, (unsigned long)a.evictions,
                (unsigned long)a.full, (unsigned long)d.batches, (unsigned long)d.draws,
                (unsigned long)d.triangles, (unsigned long)d.tex_uploads,
@@ -297,7 +298,8 @@ void kj_ctr_publish_frame(const kj_frame_input *in)
                (unsigned long)d.box_culled, (unsigned long)d.box_culled_far,
                (unsigned long)d.program_switches, (unsigned long)d.palette_uploads,
                (unsigned long)d.palette_matrices, (unsigned long)d.lighting_uploads,
-               (unsigned long)d.shininess_uploads, (unsigned long)d.state_skips);
+               (unsigned long)d.shininess_uploads, (unsigned long)d.state_skips,
+               (unsigned long)d.window_passes);
         {
             GSPGPU_PerfLog now;
             unsigned long p3d = 0, ppf = 0, psc = 0;
