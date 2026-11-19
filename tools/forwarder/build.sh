@@ -49,6 +49,6 @@ makerom -f cia -o "$out/sinjoh-platinum.cia" -target t -exefslogo \
     -elf "$out/sinjoh-forwarder.elf" \
     -banner "$out/banner.bnr" \
     -icon "$out/icon.smdh" \
-    -major 0 -minor 0 -micro 1
+    -major 0 -minor 0 -micro 2
 
 echo "built $out/sinjoh-platinum.cia ($(wc -c <"$out/sinjoh-platinum.cia") bytes)"

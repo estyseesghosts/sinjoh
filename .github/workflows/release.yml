@@ -8,7 +8,7 @@ on:
       version:
         description: "Version to release (a tag like v0.0.1 is created if it does not exist)"
         required: true
-        default: "v0.0.1"
+        default: "v0.0.2"
 
 permissions:
   contents: write

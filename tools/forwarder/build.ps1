@@ -60,7 +60,7 @@ if ($LASTEXITCODE -ne 0) { throw "icon failed" }
 
 $cia = Join-Path $out "sinjoh-platinum.cia"
 & $makerom -f cia -o $cia -target t -exefslogo -rsf (Join-Path $src "forwarder.rsf") `
-  -elf $elf -banner $banner -icon $icon -major 0 -minor 0 -micro 1
+  -elf $elf -banner $banner -icon $icon -major 0 -minor 0 -micro 2
 if ($LASTEXITCODE -ne 0) { throw "makerom failed" }
 
 $size = (Get-Item -LiteralPath $cia).Length
